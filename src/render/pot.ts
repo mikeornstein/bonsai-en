@@ -99,7 +99,7 @@ export function createPotGroup(): THREE.Group {
   soil.castShadow = false;
   group.add(soil);
 
-  // Dense grit stones — varied akadama / pumice / basalt
+  // Dense grit stones — rounded pebbles (icosa / sphere-ish)
   const gritColors = [
     new THREE.Color('#8a6a50'),
     new THREE.Color('#6a6258'),
@@ -107,15 +107,15 @@ export function createPotGroup(): THREE.Group {
     new THREE.Color('#5a544c'),
     new THREE.Color('#b0a090'),
   ];
-  const gritCount = 28;
+  const gritCount = 36;
   for (let i = 0; i < gritCount; i++) {
     const ang = (i / gritCount) * Math.PI * 2 + (i % 7) * 0.17;
     const rad = 0.012 + ((i * 17) % 11) * 0.0055;
     if (rad > 0.078) continue;
-    const size = 0.0018 + ((i * 13) % 5) * 0.0009;
-    const detail = i % 3 === 0 ? 1 : 0;
+    const size = 0.0016 + ((i * 13) % 5) * 0.00085;
+    // Higher subdivision = smoother pebble
     const stone = new THREE.Mesh(
-      new THREE.DodecahedronGeometry(size, detail),
+      new THREE.IcosahedronGeometry(size, 1),
       gritMat.clone(),
     );
     (stone.material as THREE.MeshStandardMaterial).color.copy(
