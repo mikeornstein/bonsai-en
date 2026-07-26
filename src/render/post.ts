@@ -18,6 +18,10 @@ const GradeShader = {
     contrast: { value: 1.1 },
     // Slight mid-tone saturation so green foliage pops against soft bg
     sat: { value: 1.06 },
+    // Season temperature: negative = cooler, positive = warmer (subtle)
+    temp: { value: 0.0 },
+    // Mild green ambient bias for flush seasons
+    greenBias: { value: 0.0 },
   },
   vertexShader: /* glsl */ `
     varying vec2 vUv;
@@ -32,6 +36,8 @@ const GradeShader = {
     uniform float lift;
     uniform float contrast;
     uniform float sat;
+    uniform float temp;
+    uniform float greenBias;
     varying vec2 vUv;
     void main() {
       vec4 c = texture2D(tDiffuse, vUv);
@@ -39,6 +45,12 @@ const GradeShader = {
       // Soft contrast around mid-gray
       col = (col - 0.5) * contrast + 0.5;
       col += lift;
+      // Temperature: shift R/B slightly (not Instagram)
+      col.r += temp * 0.04;
+      col.b -= temp * 0.035;
+      // Flush seasons: whisper of greener ambient
+      col.g += greenBias * 0.03;
+      col.r -= greenBias * 0.01;
       // Gentle saturation
       float luma = dot(col, vec3(0.2126, 0.7152, 0.0722));
       col = mix(vec3(luma), col, sat);
@@ -50,6 +62,71 @@ const GradeShader = {
     }
   `,
 };
+
+/** Subtle season grade — feel season before reading the HUD. */
+export type SeasonGradeParams = {
+  vignette: number;
+  lift: number;
+  contrast: number;
+  sat: number;
+  temp: number;
+  greenBias: number;
+};
+
+export function seasonGradeFor(
+  season: 'dormant' | 'earlyFlush' | 'mainFlush' | 'hardening' | 'rest',
+): SeasonGradeParams {
+  switch (season) {
+    case 'dormant':
+      // Cooler key, lower sat, softer contrast
+      return {
+        vignette: 0.38,
+        lift: 0.015,
+        contrast: 1.04,
+        sat: 0.92,
+        temp: -0.55,
+        greenBias: -0.15,
+      };
+    case 'earlyFlush':
+      return {
+        vignette: 0.32,
+        lift: 0.025,
+        contrast: 1.08,
+        sat: 1.08,
+        temp: -0.1,
+        greenBias: 0.55,
+      };
+    case 'mainFlush':
+      return {
+        vignette: 0.3,
+        lift: 0.028,
+        contrast: 1.1,
+        sat: 1.12,
+        temp: 0.05,
+        greenBias: 0.7,
+      };
+    case 'hardening':
+      // Warmer, drier, midtone contrast
+      return {
+        vignette: 0.34,
+        lift: 0.018,
+        contrast: 1.14,
+        sat: 1.02,
+        temp: 0.45,
+        greenBias: 0.05,
+      };
+    case 'rest':
+      // Muted, near-monochrome green
+      return {
+        vignette: 0.36,
+        lift: 0.012,
+        contrast: 1.06,
+        sat: 0.88,
+        temp: -0.15,
+        greenBias: 0.1,
+      };
+  }
+}
 
 /** Subtle product-shot DOF: focus on bonsai, soft floor / far field. */
 const DOF_APERTURE = 0.018;
@@ -173,6 +250,24 @@ export class StudioPost {
 
   get isEnabled(): boolean {
     return this.enabled;
+  }
+
+  /** Drive subtle global grade from plant season (no Instagram filter). */
+  setSeasonGrade(params: SeasonGradeParams): void {
+    const u = this.grade.uniforms as {
+      vignette: { value: number };
+      lift: { value: number };
+      contrast: { value: number };
+      sat: { value: number };
+      temp: { value: number };
+      greenBias: { value: number };
+    };
+    u.vignette.value = params.vignette;
+    u.lift.value = params.lift;
+    u.contrast.value = params.contrast;
+    u.sat.value = params.sat;
+    u.temp.value = params.temp;
+    u.greenBias.value = params.greenBias;
   }
 
   render(): void {

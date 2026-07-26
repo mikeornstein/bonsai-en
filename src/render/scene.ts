@@ -8,12 +8,14 @@ import {
   createPotGroup,
   createStudioBase,
 } from './pot';
-import { StudioPost } from './post';
+import { StudioPost, seasonGradeFor, type SeasonGradeParams } from './post';
+import type { Season } from '../sim/types';
 import {
   createStudioBackgroundTexture,
   createZenGardenEnvEquirectTexture,
 } from './textures';
 import { TreeRenderer } from './treeMesh';
+import { SumiChallenge } from './sumi';
 
 function clampDot(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
@@ -49,6 +51,7 @@ export class BonsaiScene {
   readonly orthoCamera: THREE.OrthographicCamera;
   readonly controls: OrbitControls;
   readonly treeRenderer: TreeRenderer;
+  readonly sumi: SumiChallenge;
   readonly raycaster = new THREE.Raycaster();
   readonly pointer = new THREE.Vector2();
 
@@ -73,6 +76,10 @@ export class BonsaiScene {
   private camMotionReady = false;
   private lastCamAccel = new THREE.Vector3();
   private prevCamOmega = new THREE.Vector3();
+  private pendingSeasonGrade: SeasonGradeParams | null = null;
+  private keyLight: THREE.DirectionalLight | null = null;
+  private hemiLight: THREE.HemisphereLight | null = null;
+  private fillLight: THREE.DirectionalLight | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     // WebGL first — fail fast with a clear error if unavailable
@@ -136,6 +143,7 @@ export class BonsaiScene {
 
     // Heavy scene graph after renderer is alive
     this.treeRenderer = new TreeRenderer();
+    this.sumi = new SumiChallenge();
     this.pot = createPotGroup();
     this.studioBase = createStudioBase();
 
@@ -145,6 +153,7 @@ export class BonsaiScene {
 
     this.scene.add(this.studioBase);
     this.scene.add(this.stage);
+    this.scene.add(this.sumi.group);
 
     // IBL + post are best-effort (must not block boot)
     try {
@@ -164,6 +173,9 @@ export class BonsaiScene {
             Math.max(window.innerWidth, 1),
             Math.max(window.innerHeight, 1),
           );
+          if (this.pendingSeasonGrade) {
+            this.post.setSeasonGrade(this.pendingSeasonGrade);
+          }
         } catch (err) {
           console.warn('[bonsai-en] post stack disabled', err);
           this.post = null;
@@ -190,15 +202,17 @@ export class BonsaiScene {
 
   private setupLights(): void {
     const hemi = new THREE.HemisphereLight(0xf4f7fc, 0xd0c4b0, 0.48);
+    this.hemiLight = hemi;
     this.scene.add(hemi);
 
-    // Key light — aim at stage center so the ortho shadow camera frames pot feet
+    // Key as soft window / shoji — single soft source from upper-right
     const sun = new THREE.DirectionalLight(0xfff4e8, 1.42);
-    sun.position.set(0.72, 1.85, 0.95);
+    sun.position.set(1.15, 1.55, 0.55);
     sun.castShadow = true;
     // Must be in the scene graph for the light to track the target
     sun.target.position.set(0, PEDESTAL_HEIGHT + 0.04, 0);
     this.scene.add(sun.target);
+    this.keyLight = sun;
 
     // Higher res + tight frustum so mm-scale feet resolve on the pedestal top
     const map = this.softGL ? 1024 : 2048;
@@ -220,6 +234,7 @@ export class BonsaiScene {
 
     const fill = new THREE.DirectionalLight(0xdce6ff, 0.34);
     fill.position.set(-1.5, 1.0, -0.55);
+    this.fillLight = fill;
     this.scene.add(fill);
 
     const rim = new THREE.DirectionalLight(0xffffff, 0.24);
@@ -230,6 +245,58 @@ export class BonsaiScene {
     const bounce = new THREE.DirectionalLight(0xe8e0d4, 0.08);
     bounce.position.set(0.15, 0.05, -0.35);
     this.scene.add(bounce);
+  }
+
+  /**
+   * Subtle season grade on post stack + mild key/fill Kelvin shift.
+   * Soft GL (no post): light path only.
+   */
+  applySeasonLook(season: Season): void {
+    const grade = seasonGradeFor(season);
+    this.pendingSeasonGrade = grade;
+    this.post?.setSeasonGrade(grade);
+    this.treeRenderer.setSeason(season);
+    // Tip pad assignment depends on season — rebuild when it changes
+    this.dirty = true;
+
+    // Window Kelvin / intensity by season (subtle)
+    if (this.keyLight) {
+      const colors: Record<Season, number> = {
+        dormant: 0xe8eef8,
+        earlyFlush: 0xf2f6ec,
+        mainFlush: 0xf6f8e8,
+        hardening: 0xfff0dc,
+        rest: 0xeeece8,
+      };
+      const intensities: Record<Season, number> = {
+        dormant: 1.18,
+        earlyFlush: 1.38,
+        mainFlush: 1.48,
+        hardening: 1.4,
+        rest: 1.22,
+      };
+      this.keyLight.color.setHex(colors[season]);
+      this.keyLight.intensity = intensities[season];
+      // Keep window direction; slight seasonal elevation
+      const elev = season === 'dormant' ? 1.35 : season === 'rest' ? 1.4 : 1.55;
+      this.keyLight.position.set(1.15, elev, 0.55);
+    }
+    if (this.hemiLight) {
+      if (season === 'dormant' || season === 'rest') {
+        this.hemiLight.intensity = 0.4;
+        this.hemiLight.color.setHex(0xe8eef4);
+      } else if (season === 'mainFlush' || season === 'earlyFlush') {
+        this.hemiLight.intensity = 0.52;
+        this.hemiLight.color.setHex(0xf0f6ec);
+      } else {
+        this.hemiLight.intensity = 0.46;
+        this.hemiLight.color.setHex(0xf4f0e8);
+      }
+    }
+    if (this.fillLight) {
+      this.fillLight.intensity =
+        season === 'dormant' ? 0.42 : season === 'rest' ? 0.36 : 0.32;
+    }
   }
 
   private onResize = () => {
@@ -563,6 +630,7 @@ export class BonsaiScene {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
     this.treeRenderer.dispose();
+    this.sumi.dispose();
     this.post?.dispose();
     this.bgTex.dispose();
     this.envMap?.dispose();
