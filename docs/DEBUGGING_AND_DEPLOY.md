@@ -63,20 +63,102 @@ If the live site loads HTML but JS/CSS 404, the base path is almost always wrong
 
 ---
 
-## 2. GitHub Actions deploy
+## 2. Feature branches and pull requests
+
+**Policy:** all development happens on feature branches. Changes reach `main` only through pull requests. **Do not push commits directly to `main`.**
+
+### Why
+
+- Keeps `main` deployable and reviewable  
+- PR CI runs tests/build before merge  
+- Deploy (GitHub Pages) fires only when `main` advances (merged PR)  
+
+### Branch naming
+
+```text
+feat/…       new capability
+fix/…        bugfix
+docs/…       documentation only
+chore/…      tooling, deps, CI
+refactor/…   structure without behavior change
+test/…       tests only
+```
+
+Examples: `feat/juniper-scale-lod`, `fix/wire-springback`, `docs/pr-workflow`.
+
+### Day-to-day flow
+
+```bash
+git fetch origin
+git checkout main
+git pull origin main
+
+git checkout -b feat/my-change
+
+# implement → npm test → npm run build
+# if visual: npm run screenshots and inspect PNGs
+
+git add -A   # respect .gitignore
+git commit -m "Describe the change in prose."
+git push -u origin HEAD
+
+gh pr create --base main --title "Short title" --body "$(cat <<'EOF'
+## Summary
+- …
+
+## Test plan
+- [ ] npm test
+- [ ] npm run build
+- [ ] screenshots (if visual)
+EOF
+)"
+```
+
+### Interpreting “commit and push”
+
+Agents and humans should:
+
+1. Ensure work is on a **feature branch** (create one if currently on `main`).  
+2. Commit there.  
+3. `git push -u origin HEAD` (the feature branch only).  
+4. Create or update a **PR into `main`**.  
+5. **Never** `git push origin main` with new feature commits.
+
+### Merging
+
+Prefer GitHub merge (UI or CLI), not a local merge-push to `main`:
+
+```bash
+gh pr checks          # wait for CI
+gh pr merge --squash  # or --merge
+git checkout main && git pull origin main
+```
+
+Optional: enable branch protection on `main` (require PR, require status checks) under **Settings → Branches**. Agents cannot always change org settings; document the intent here even if protection is configured manually.
+
+### PR CI vs deploy
+
+| Event | Workflow | What it does |
+|-------|----------|----------------|
+| Pull request → `main` | **CI** (`.github/workflows/ci.yml`) | `npm ci` · test · build (no deploy) |
+| Push / merge to `main` | **Deploy to GitHub Pages** | test · build · deploy live site |
+
+---
+
+## 3. GitHub Actions deploy
 
 ### Workflow file
 
 [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml)
 
-| Trigger | `push` to `main`, `workflow_dispatch` |
+| Trigger | `push` to `main` (from merged PRs), `workflow_dispatch` |
 | Permissions | `contents: read`, `pages: write`, `id-token: write` |
 | Concurrency | `pages` group, cancel in-progress |
 
 ### Pipeline
 
 ```
-push main
+PR merged → push main
   → build job
        npm ci
        npm test
@@ -108,13 +190,17 @@ gh run list --workflow=deploy.yml --limit 3
 
 ---
 
-## 3. Inspecting failures (do this before asking for pasted logs)
+## 4. Inspecting failures (do this before asking for pasted logs)
 
 ### List and open runs
 
 ```bash
 gh run list --limit 10
+gh run list --workflow=ci.yml --limit 5
 gh run list --workflow="Deploy to GitHub Pages" --limit 5
+
+gh pr checks
+gh pr view
 
 gh run view <run-id>
 gh run view <run-id> --log-failed    # failed steps only
@@ -122,7 +208,8 @@ gh run view <run-id> --log           # full log
 gh run watch <run-id> --exit-status
 ```
 
-In the GitHub UI: **Actions** → select run → failed job → expand step.
+In the GitHub UI: **Actions** → select run → failed job → expand step.  
+For PR-specific failures: open the PR → **Checks**.
 
 ### Re-run
 
@@ -133,7 +220,7 @@ gh run rerun <run-id>                # entire workflow
 
 ---
 
-## 4. Common deploy failures
+## 5. Common deploy / CI failures
 
 ### A. Deploy 404 — Pages not enabled
 
@@ -179,11 +266,11 @@ npx tsc --noEmit
 GITHUB_PAGES=true npm run build
 ```
 
-Commit fix, push to `main` (or re-run after push).
+Commit fix on the **feature branch**, push the branch, and let PR CI re-run (or re-run the failed check). Merge to `main` only via PR.
 
 ### C. Build fails — missing lockfile / npm ci
 
-Prefer `package-lock.json` committed. CI uses `npm ci`. If lock is out of date: `npm install` and commit the lockfile.
+Prefer `package-lock.json` committed. CI uses `npm ci`. If lock is out of date: `npm install` and commit the lockfile on the feature branch.
 
 ### D. Site deploys but looks broken
 
@@ -211,7 +298,23 @@ Do not remove `id-token: write` (OIDC for Pages).
 
 ---
 
-## 5. Git push issues
+## 6. Git push issues
+
+### Accidental work on `main`
+
+If commits were made on `main` locally before noticing:
+
+```bash
+# Move commits onto a feature branch without losing work
+git branch feat/recovered-work    # points at current HEAD
+git fetch origin
+git reset --hard origin/main     # local main matches remote
+git checkout feat/recovered-work
+git push -u origin HEAD
+gh pr create --base main
+```
+
+Do **not** force-push `main` to “fix” this unless the user explicitly requests it and understands the risk.
 
 ### GH007 — private email address
 
@@ -223,7 +326,7 @@ remote: error: GH007: Your push would publish a private email address.
 
 **Cause:** Commit **author** or **committer** email is a private address GitHub blocks from being published.
 
-**Fix for unpushed commits** (example noreply for this owner):
+**Fix for unpushed feature-branch commits** (example noreply for this owner):
 
 ```bash
 export GIT_AUTHOR_NAME="Mike Ornstein"
@@ -231,7 +334,7 @@ export GIT_AUTHOR_EMAIL="10444033+mikeornstein@users.noreply.github.com"
 export GIT_COMMITTER_NAME="Mike Ornstein"
 export GIT_COMMITTER_EMAIL="10444033+mikeornstein@users.noreply.github.com"
 
-# Rewrite last N commits on main (only if not yet on remote, or after coordinating force-push)
+# On the feature branch only — rewrite last N commits
 git rebase HEAD~N --exec 'git commit --amend --reset-author --no-edit'
 
 git log -N --format='author=%ae committer=%ce subject=%s'
@@ -244,11 +347,11 @@ git push -u origin HEAD
 git config user.email "10444033+mikeornstein@users.noreply.github.com"
 ```
 
-Never force-push `main` unless the user explicitly allows it and history rewrite is intended.
+Never force-push `main` unless the user explicitly allows it and history rewrite is intended. Feature branches may be force-pushed only if they are not shared / user agrees (`--force-with-lease`).
 
 ---
 
-## 6. Architecture debugging map
+## 7. Architecture debugging map
 
 ```
 src/sim/          # Pure plant model — unit test here
@@ -278,24 +381,26 @@ src/share/        # localStorage + URL hash share
 
 ---
 
-## 7. Agent quick checklist
+## 8. Agent quick checklist
 
 When the user reports a problem:
 
-1. **Classify:** CI/deploy vs local runtime vs visual vs sim logic.  
-2. **Pull evidence yourself:** `gh run …`, local `npm test` / build, screenshots.  
-3. **Fix + verify** with the same evidence path.  
-4. **Commit** when asked; use noreply email; **push** only when asked.  
-5. If deploy was red only because Pages was off, enable Pages and **re-run** — no code change required.
+1. **Branch:** work on a feature branch; open/update a PR — never push fixes straight to `main`.  
+2. **Classify:** CI/deploy vs local runtime vs visual vs sim logic.  
+3. **Pull evidence yourself:** `gh run …` / `gh pr checks`, local `npm test` / build, screenshots.  
+4. **Fix + verify** with the same evidence path.  
+5. **Commit** when asked; use noreply email; **push the feature branch** when asked; ensure a PR exists.  
+6. If deploy was red only because Pages was off, enable Pages and **re-run** — no code change required.
 
 ---
 
-## 8. Related files
+## 9. Related files
 
 | Path | Role |
 |------|------|
-| [AGENTS.md](../AGENTS.md) | Short agent playbook |
+| [AGENTS.md](../AGENTS.md) | Short agent playbook (includes PR rules) |
 | [README.md](../README.md) | Player-facing overview |
-| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | CI/CD |
+| [`.github/workflows/ci.yml`](../.github/workflows/ci.yml) | PR / branch CI (test + build) |
+| [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | Deploy to Pages on `main` |
 | [`vite.config.ts`](../vite.config.ts) | Base path for Pages |
 | [`scripts/screenshot.mjs`](../scripts/screenshot.mjs) | Visual regression capture |

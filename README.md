@@ -55,9 +55,26 @@ Simulation code lives in `src/sim/` (no Three.js). Rendering in `src/render/` pr
 | `npm test` | Vitest unit tests for growth / prune / wire |
 | `npm run screenshots` | Headless captures → `screenshots/*.png` (dev server must be up) |
 
+## Contributing workflow
+
+Work on **feature branches** and open **pull requests** into `main`. Do not push commits directly to `main`.
+
+```bash
+git checkout main && git pull
+git checkout -b feat/my-change
+# … commit …
+git push -u origin HEAD
+gh pr create --base main
+```
+
+- **PR CI** (`.github/workflows/ci.yml`): test + build on pull requests  
+- **Deploy** (`.github/workflows/deploy.yml`): after merge to `main` only  
+
+Details: [AGENTS.md](./AGENTS.md) and [docs/DEBUGGING_AND_DEPLOY.md](./docs/DEBUGGING_AND_DEPLOY.md).
+
 ## GitHub Pages
 
-Push to `main` runs `.github/workflows/deploy.yml`:
+Merges to `main` run `.github/workflows/deploy.yml`:
 
 1. `npm ci` · `npm test` · `npm run build` with `GITHUB_PAGES=true` (base `/bonsai-en/`)  
 2. Deploys the `dist` artifact to GitHub Pages  
@@ -70,10 +87,10 @@ For a custom repo name, change `base` in `vite.config.ts` to match `https://<use
 
 | Doc | Audience |
 |-----|----------|
-| [AGENTS.md](./AGENTS.md) | Short playbook for automated agents |
-| [docs/DEBUGGING_AND_DEPLOY.md](./docs/DEBUGGING_AND_DEPLOY.md) | Full CI, Pages, screenshots, and push troubleshooting |
+| [AGENTS.md](./AGENTS.md) | Short playbook for automated agents (branches, PRs, deploy) |
+| [docs/DEBUGGING_AND_DEPLOY.md](./docs/DEBUGGING_AND_DEPLOY.md) | Full CI, PR flow, Pages, screenshots, troubleshooting |
 
-Agents should pull CI failures with `gh run view <id> --log-failed` instead of asking for pasted logs.
+Agents should pull CI failures with `gh run view <id> --log-failed` / `gh pr checks` instead of asking for pasted logs.
 
 ## Save format
 
