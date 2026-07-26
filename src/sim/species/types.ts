@@ -20,6 +20,27 @@ export interface SpeciesDefinition {
   /** Max children per node (excluding terminal extension). */
   maxChildren: number;
 
+  /**
+   * Minimum azimuth separation between sibling laterals (radians).
+   * New axillary buds / lateral flushes resample when closer than this.
+   */
+  minSiblingAngle: number;
+  /**
+   * How successive axillary buds are placed around the parent axis.
+   * - `golden`: successive +golden-angle (~137.5°) from a base
+   * - `opposite`: successive +π (decussate / opposite pairs)
+   * - `random`: uniform azimuth, still subject to minSiblingAngle
+   */
+  phyllotaxis: 'golden' | 'opposite' | 'random';
+  /**
+   * Soft free-space probe radius (m). Proposed lateral directions that pass
+   * within this distance of another living segment are rejected (capped retries).
+   * Set 0 to disable.
+   */
+  freeSpaceProbeRadius: number;
+  /** Max extra azimuth samples when min-angle or free-space conflicts. */
+  branchAzimuthRetries: number;
+
   /** Photosynthetic rate per foliage area unit per day at full light. */
   photosynthesisRate: number;
   /** Maintenance cost per woody volume unit per day. */

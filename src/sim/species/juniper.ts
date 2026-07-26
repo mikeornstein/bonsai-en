@@ -19,6 +19,15 @@ export const juniper: SpeciesDefinition = {
   branchAngle: { mean: 0.62, std: 0.16 },
   lateralBudChance: 0.018,
   maxChildren: 3,
+  // Sibling lateral separation — avoids parallel “railroad” forks (#39)
+  /** ~35° minimum azimuth between laterals on the same node. */
+  minSiblingAngle: 0.61,
+  /** Golden-angle spiral; open-sector fallback on conflict. */
+  phyllotaxis: 'golden',
+  /** Soft cone/ray occupancy (~1 cm); 0 would disable free-space probes. */
+  freeSpaceProbeRadius: 0.01,
+  /** Cap resample cost under Years acceleration. */
+  branchAzimuthRetries: 8,
 
   // Photosynthesis high enough that multi-year fast-forward stays solvent
   photosynthesisRate: 2.4,
