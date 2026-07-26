@@ -72,17 +72,28 @@ try {
   }
 
   await page.click('button[data-speed="year"]');
-  await new Promise((r) => setTimeout(r, 1200));
-  const ageAfter = await page.evaluate(() =>
-    document.getElementById('info-age')?.textContent?.trim(),
-  );
-  if (!ageAfter || ageAfter === hud.age) {
-    // Year mode should advance plant age if the game loop is running
-    // Allow equality only if already paused somehow — require change for year
+  // Headless rAF can be throttled; wait until HUD age actually changes
+  // rather than a fixed wall-clock sleep (was flaky under load).
+  try {
+    await page.waitForFunction(
+      (before) => {
+        const age = document.getElementById('info-age')?.textContent?.trim();
+        return Boolean(age && age !== before);
+      },
+      { timeout: 8000 },
+      hud.age,
+    );
+  } catch {
+    const ageAfter = await page.evaluate(() =>
+      document.getElementById('info-age')?.textContent?.trim(),
+    );
     throw new Error(
       `Time control did not advance age (before=${hud.age}, after=${ageAfter})`,
     );
   }
+  const ageAfter = await page.evaluate(() =>
+    document.getElementById('info-age')?.textContent?.trim(),
+  );
 
   if (pageErrors.length) {
     throw new Error(`Page errors during boot: ${pageErrors.join('; ')}`);
