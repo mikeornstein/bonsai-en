@@ -11,7 +11,12 @@ import {
 } from '../sim/time';
 import { createSapling, ensurePlayableTree } from '../sim/tree';
 import { pinchAt, pruneAt } from '../sim/tools/prune';
-import { applyWire, bendWiredNode, removeWire } from '../sim/tools/wire';
+import {
+  applyWire,
+  bendWiredNode,
+  removeWire,
+  wireSetLabel,
+} from '../sim/tools/wire';
 import { downloadTree, parseTree, serializeTree } from '../sim/serialize';
 import type { NodeId, TreeState, Vec3 } from '../sim/types';
 import { BonsaiScene } from '../render/scene';
@@ -97,14 +102,23 @@ export class Game {
   physics: PhysicsWorld;
 
   private accum = 0;
+  /** True while actively bending a wired branch (orbit disabled). */
   private wiring = false;
+  /** Node under pointer on wire-tool down; bend starts after drag threshold. */
+  private wireTarget: NodeId | null = null;
   private pointerDown = false;
   private downX = 0;
   private downY = 0;
+  private lastBendX = 0;
+  private lastBendY = 0;
   private moved = false;
+  /** Session/local flag: first deliberate bend completed (hint can fade). */
+  private hasBentOnce = readHasBentOnce();
   private statusEl: HTMLElement;
   private hintEl: HTMLElement;
   private autosaveTimer = 0;
+  /** Touch: slightly larger drag threshold so taps don't start bends. */
+  private readonly dragThresholdPx = 8;
   /** Throttle expensive mesh rebuilds during time acceleration. */
   private visualCooldownTimer = 0;
   private pendingVisual = false;
@@ -564,36 +578,95 @@ export class Game {
   }
 
   private bindPointer(canvas: HTMLCanvasElement): void {
-    canvas.addEventListener('pointerdown', (e) => {
-      this.pointerDown = true;
-      this.moved = false;
-      this.downX = e.clientX;
-      this.downY = e.clientY;
-      if (this.tool === 'wire' && this.selected) {
-        this.wiring = true;
-        this.scene.controls.enabled = false;
-        applyWire(this.tree, this.selected);
-      }
-    });
+    /**
+     * Wire UX model:
+     * - Pointer down on wood → candidate for wire/bend; orbit disabled for that gesture
+     * - Drag past threshold on wood → install wire if needed, bend in viewing plane
+     * - Empty canvas drag → orbit (controls never stolen)
+     * - Tap on unwired wood → install wire; tap on wired → select + set %
+     * - Unwire tool remains for removal
+     *
+     * Touch: 8px drag threshold so taps don't start bends; multi-touch orbit/zoom
+     * via OrbitControls still works on empty canvas. Known limit: one-finger
+     * bend on wood; use second finger / empty space to reframe.
+     */
+    // Capture phase so we can disable OrbitControls before it starts orbiting
+    // when the pointer hits wood under the wire tool.
+    canvas.addEventListener(
+      'pointerdown',
+      (e) => {
+        this.pointerDown = true;
+        this.moved = false;
+        this.wiring = false;
+        this.wireTarget = null;
+        this.downX = e.clientX;
+        this.downY = e.clientY;
+        this.lastBendX = e.clientX;
+        this.lastBendY = e.clientY;
+
+        if (this.tool === 'wire') {
+          const id = this.scene.pickNode(e.clientX, e.clientY);
+          if (id) {
+            this.wireTarget = id;
+            // Steal orbit only while interacting with wood
+            this.scene.controls.enabled = false;
+          }
+        }
+      },
+      { capture: true },
+    );
 
     canvas.addEventListener('pointermove', (e) => {
       if (!this.pointerDown) return;
-      const dx = e.clientX - this.downX;
-      const dy = e.clientY - this.downY;
-      if (Math.hypot(dx, dy) > 6) this.moved = true;
+      const dxFromDown = e.clientX - this.downX;
+      const dyFromDown = e.clientY - this.downY;
+      if (Math.hypot(dxFromDown, dyFromDown) > this.dragThresholdPx) {
+        this.moved = true;
+      }
 
-      if (this.wiring && this.selected && this.tool === 'wire') {
-        const dir = this.scene.bendDirectionFromPointer(
-          this.tree,
-          this.selected,
-          e.clientX,
-          e.clientY,
-        );
-        if (dir) {
-          bendWiredNode(this.tree, this.selected, dir);
-          resetJointElastic(this.physics, this.selected);
-          this.markPhysicsDirty(false);
-          this.scene.markDirty();
+      if (this.tool !== 'wire' || !this.wireTarget) return;
+
+      // Begin bend only after a real drag on wood (orbit already off from down)
+      if (!this.wiring && this.moved) {
+        this.wiring = true;
+        this.selected = this.wireTarget;
+        this.scene.setSelected(this.wireTarget);
+        const node = this.tree.nodes[this.wireTarget];
+        if (node && !node.wire) {
+          const r = applyWire(this.tree, this.wireTarget);
+          this.setStatus(r.message);
+          void import('../render/audio').then((a) => a.playToolSound('wire'));
+        }
+        // Reset sample origin so the threshold travel doesn't jump the bend
+        this.lastBendX = e.clientX;
+        this.lastBendY = e.clientY;
+        this.markPhysicsDirty(false);
+        this.scene.markDirty();
+      }
+
+      if (!this.wiring || !this.wireTarget) return;
+
+      const dx = e.clientX - this.lastBendX;
+      const dy = e.clientY - this.lastBendY;
+      this.lastBendX = e.clientX;
+      this.lastBendY = e.clientY;
+      if (dx === 0 && dy === 0) return;
+
+      const dir = this.scene.bendDirectionFromDrag(
+        this.tree,
+        this.wireTarget,
+        dx,
+        dy,
+      );
+      if (dir) {
+        bendWiredNode(this.tree, this.wireTarget, dir);
+        resetJointElastic(this.physics, this.wireTarget);
+        this.markPhysicsDirty(false);
+        this.scene.markDirty();
+        if (!this.hasBentOnce) {
+          this.hasBentOnce = true;
+          writeHasBentOnce();
+          this.setStatus('Shaping · empty drag orbits · Unwire tool removes');
         }
       }
     });
@@ -601,13 +674,28 @@ export class Game {
     const end = (e: PointerEvent) => {
       if (!this.pointerDown) return;
       this.pointerDown = false;
-      if (this.wiring) {
-        this.wiring = false;
+
+      const wasWiring = this.wiring;
+      const hadWoodTarget = Boolean(this.wireTarget);
+      this.wiring = false;
+      this.wireTarget = null;
+
+      // Always restore orbit after a wood-hit gesture under wire tool
+      if (hadWoodTarget || wasWiring) {
         this.scene.controls.enabled = true;
+      }
+
+      if (wasWiring) {
         this.scene.markDirty();
         this.refreshHud();
+        // Keep first-run wire hint until a bend has happened
+        if (this.tool === 'wire' && this.hasBentOnce) {
+          this.hintEl.style.opacity = '0.35';
+        }
         return;
       }
+
+      // Dragged on empty canvas (or short miss) → orbit already handled by controls
       if (this.moved) return;
       this.onTap(e.clientX, e.clientY);
     };
@@ -625,10 +713,37 @@ export class Game {
       return;
     }
 
+    // Wire tool: tap installs on unwired wood; re-tap wired shows set progress
+    if (this.tool === 'wire') {
+      this.selected = id;
+      this.scene.setSelected(id);
+      const node = this.tree.nodes[id];
+      if (node?.wire) {
+        this.setStatus(
+          `${wireSetLabel(node.wire.setAmount)} · drag wood to shape · empty drag orbits`,
+        );
+        this.refreshHud();
+        return;
+      }
+      const r = applyWire(this.tree, id);
+      this.setStatus(
+        this.hasBentOnce
+          ? r.message
+          : 'Wire on · drag this branch to bend · empty drag orbits',
+      );
+      if (r.ok) {
+        void import('../render/audio').then((a) => a.playToolSound('wire'));
+        this.markPhysicsDirty(false);
+        this.scene.markDirty();
+      }
+      this.refreshHud();
+      return;
+    }
+
     const r = this.actOnNode(this.tool, id);
     if (r.ok && this.tool !== 'inspect') {
       const sound =
-        this.tool === 'prune' || this.tool === 'pinch' || this.tool === 'wire' || this.tool === 'unwire'
+        this.tool === 'prune' || this.tool === 'pinch' || this.tool === 'unwire'
           ? this.tool
           : null;
       if (sound) {
@@ -642,21 +757,29 @@ export class Game {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tool === tool);
     });
+    const wireHint = this.hasBentOnce
+      ? 'Drag wood to wire + bend · empty drag orbits · Unwire removes'
+      : 'Drag a branch to wire and shape · empty space orbits the camera';
     const hints: Record<ToolMode, string> = {
       inspect: 'Tap a branch · Drag to orbit',
       prune: 'Tap a branch to cut clean',
       pinch: 'Tap a tip to pinch · laterals wake',
-      wire: 'Tap to wire, drag to bend · wood holds over time',
+      wire: wireHint,
       unwire: 'Tap wired wood to remove wire',
     };
     this.hintEl.textContent = hints[tool];
-    // Soft fade tool hints after a few seconds
+    this.hintEl.style.opacity = '0.85';
+    // First-run wire hint stays bright until the player has bent once
+    if (tool === 'wire' && !this.hasBentOnce) {
+      return;
+    }
+    // Soft fade other tool hints after a few seconds
     window.setTimeout(() => {
       if (this.tool === tool && this.hintEl.textContent === hints[tool]) {
+        if (tool === 'wire' && !this.hasBentOnce) return;
         this.hintEl.style.opacity = '0.35';
       }
     }, 4000);
-    this.hintEl.style.opacity = '0.85';
   }
 
   setSpeed(speed: SpeedMode): void {
@@ -866,5 +989,23 @@ export class Game {
       this.avgFrameMs === 0
         ? this.lastFrameMs
         : this.avgFrameMs * 0.9 + this.lastFrameMs * 0.1;
+  }
+}
+
+const WIRE_BENT_ONCE_KEY = 'bonsai-en:wire-bent-once';
+
+function readHasBentOnce(): boolean {
+  try {
+    return localStorage.getItem(WIRE_BENT_ONCE_KEY) === '1';
+  } catch {
+    return false;
+  }
+}
+
+function writeHasBentOnce(): void {
+  try {
+    localStorage.setItem(WIRE_BENT_ONCE_KEY, '1');
+  } catch {
+    // private mode / quota — session-only flag still works via instance field
   }
 }

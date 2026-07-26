@@ -1,6 +1,7 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { computeWorldFrames, type NodeWorld } from '../sim/tree';
+import { bendDirFromViewDelta } from '../sim/tools/wire';
 import type { NodeId, TreeState } from '../sim/types';
 import {
   PEDESTAL_HEIGHT,
@@ -581,6 +582,11 @@ export class BonsaiScene {
     return id ?? null;
   }
 
+  /**
+   * Absolute aim (legacy): map pointer to a direction from branch base through
+   * a camera-facing plane at the tip. Prefer {@link bendDirectionFromDrag}
+   * for interactive shaping — absolute aim is hard to predict.
+   */
   bendDirectionFromPointer(
     tree: TreeState,
     nodeId: NodeId,
@@ -610,6 +616,42 @@ export class BonsaiScene {
     this.treeRenderer.group.localToWorld(baseWorld);
     const dir = hit.sub(baseWorld).normalize();
     return [dir.x, dir.y, dir.z];
+  }
+
+  /**
+   * Incremental viewing-plane bend from screen-space drag deltas.
+   * Uses camera right/up so motion stays in the picture plane; damping and
+   * max rate live in `bendDirFromViewDelta` (~0.15°/px effective).
+   */
+  bendDirectionFromDrag(
+    tree: TreeState,
+    nodeId: NodeId,
+    dxPx: number,
+    dyPx: number,
+  ): [number, number, number] | null {
+    const frames = computeWorldFrames(tree);
+    const frame = frames.get(nodeId);
+    if (!frame) return null;
+
+    const right = new THREE.Vector3();
+    const up = new THREE.Vector3();
+    this.camera.matrixWorld.extractBasis(right, up, new THREE.Vector3());
+    right.normalize();
+    up.normalize();
+
+    const current: [number, number, number] = [
+      frame.dir[0],
+      frame.dir[1],
+      frame.dir[2],
+    ];
+    const next = bendDirFromViewDelta(
+      current,
+      [right.x, right.y, right.z],
+      [up.x, up.y, up.z],
+      dxPx,
+      dyPx,
+    );
+    return [next[0], next[1], next[2]];
   }
 
   /**
