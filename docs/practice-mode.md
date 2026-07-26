@@ -91,7 +91,8 @@ So practice mode is a **meaningful training guide**, not a trivial checkbox and 
 
 ```bash
 npm run dev
-npm run practice:match   # → playtest-reports/practice/
+npm run practice:match      # brute-force hack path → playtest-reports/practice/
+npm run practice:shokunin   # craftsman path → playtest-reports/practice/shokunin-*
 ```
 
 Harness:
@@ -102,17 +103,85 @@ window.__bonsai.getPracticeScore()
 // { score, iou, coverage, overflow, centerlineRmse, heightRatio, bandFit, grade, label }
 ```
 
+## Shokunin (craftsman) path
+
+**Issue:** #40  
+
+The ink ghost is a classic **informal upright (moyogi)**. A craftsman works **front-first**, **structure before foliage**, **time between cuts** — never Years-spin hoping the diamond fills, and never “prune the longest 45% of tips” with uncorrelated wire dirs.
+
+Maxim encoded in the test:
+
+> *Cut first what is wrong, wire the line you keep, grow into the shape, never grow into a mess you refuse to edit.*
+
+### Phase sequence
+
+| ID | Phase | Shokunin intent | Harness actions |
+|----|-------|-----------------|-----------------|
+| **SK0** | Front + practice on | Choose the viewing front; commit to sumi plane | `newSapling`, `setSumiChallenge(true)`, `setView('front')`, score **T0**, screenshots |
+| **SK1** | Structural prune | Remove what does not belong **before** bulk growth | Rank living tips by **envelope overflow** (tip X outside band, tip Y above apex, depth that ruins front); `act('prune')` up to N worst — **no** bulk Years yet |
+| **SK2** | Trunk wire | Set the moyogi story on the primary chain | Walk parent chain from apex; `act('wire')` + `bend` toward `PRACTICE_STEM` tangents base → apex |
+| **SK3** | Wire set | Let plant-time lignify the bend | `setSpeed('month')` ~3.5s wall; pause; record `wireSetAmount` |
+| **SK4** | Pad flush | Grow mass **into** the envelope | 2–3 loops: short week/year burst → pinch apex overshoot → light overflow prune |
+| **SK5** | Rest + read | Still the tree; unwire set wood; final grade | Optional unwire when set high; front + product screenshots; report |
+
+### Why this is not `practice:match`
+
+| `practice:match` (hack) | Shokunin |
+|-------------------------|----------|
+| Long Years first | Structure before bulk growth |
+| Prune longest leaves generically | Prune by **envelope + front logic** |
+| Wire mid nodes with alternating dirs | Wire **primary trunk** to `PRACTICE_STEM` |
+| Aggressive multi-round tip clear | Seasonal grow → pinch → light prune loops |
+| Peak ~forming 0.68 | Target **close**, aspirational **match** |
+
+### Scoring gates
+
+| Gate | Severity | Criterion |
+|------|----------|-----------|
+| Path improves | **Hard** | Best phase score ≥ T0 + 0.05 |
+| No crash / pageerror | **Hard** | Zero page errors during run |
+| Close | Soft | Final grade `close` or `match` (≥ 0.72) — track until consistently green |
+| Match | Stretch | Final `score ≥ 0.82` |
+
+Exit code **1** only on hard-gate failure. Soft gates are recorded in the report.
+
+### Pure-sim helpers
+
+Under `src/sim/practice/shokunin.ts` (unit-tested, no WebGL):
+
+| Helper | Role |
+|--------|------|
+| `rankOverflowPruneTargets(tree)` | Envelope-ranked prune candidates (not length-ranked) |
+| `primaryStemNodeIds(tree)` | First-child trunk chain base → apex |
+| `stemBendDirections` / `stemDirectionAtHeight` | `PRACTICE_STEM` tangents for wire bends |
+
+### How to run
+
+```bash
+# Terminal A
+npm run dev
+
+# Terminal B
+npm run practice:shokunin
+# → playtest-reports/practice/shokunin-report.md
+# → playtest-reports/practice/shokunin-SK*.png
+```
+
 ## Recommendations (follow-ups)
 
 1. **View-locked “front for practice”** — optional snap camera to front when Practice turns on so ink and score agree with what the player sees.  
 2. **Persist practice score in the meta panel** (not only status) so tool messages don’t bury it.  
 3. **Celebrate match** — call `acknowledge()` + soft ink pulse when grade first hits `match`.  
 4. **Multiple targets** — cascade, literati, windswept packs once one shape is fun.  
-5. **Seeded sapling for `practice:match`** — reduce score variance across CI runs.
+5. **Seeded sapling for practice scripts** — reduce score variance across CI runs.  
+6. **Player-facing checklist** — “Cut outside the ink · Wire the trunk · Grow into the pad” hints in Practice mode.
 
 ## Related code
 
 - `src/sim/practice/target.ts` — shape data  
 - `src/sim/practice/score.ts` — metric + tests  
+- `src/sim/practice/shokunin.ts` — craftsman ranking / stem helpers + tests  
 - `src/render/sumi.ts` — ghost  
-- `scripts/practice-match.mjs` — automated train + report  
+- `scripts/practice-match.mjs` — automated hack train + report  
+- `scripts/practice-shokunin.mjs` — craftsman path + report  
+

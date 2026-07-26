@@ -55,7 +55,8 @@ Simulation code lives in `src/sim/` (no Three.js). Rendering in `src/render/` pr
 | `npm test` | Vitest unit tests for growth / prune / wire |
 | `npm run screenshots` | Headless captures → `screenshots/*.png` (dev server must be up) |
 | `npm run playtest` | Scenario playthrough → `playtest-reports/` (dev server must be up) |
-| `npm run practice:match` | Sumi practice train + silhouette score → `playtest-reports/practice/` |
+| `npm run practice:match` | Sumi practice train (hack path) + silhouette score → `playtest-reports/practice/` |
+| `npm run practice:shokunin` | Shokunin craftsman path (SK0–SK5) → `playtest-reports/practice/shokunin-*` |
 
 ## Contributing workflow
 
