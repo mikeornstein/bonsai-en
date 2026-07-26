@@ -1,16 +1,17 @@
 :root {
-  color-scheme: dark;
-  --bg: #0f1a12;
-  --panel: rgba(18, 32, 22, 0.82);
-  --panel-border: rgba(140, 180, 120, 0.22);
-  --text: #e8f0e4;
-  --muted: #9bb09a;
-  --accent: #7cb86a;
-  --accent-dim: #3d6b38;
-  --danger: #c45c4a;
-  --wire: #c9a84c;
-  --radius: 12px;
-  --shadow: 0 8px 28px rgba(0, 0, 0, 0.35);
+  color-scheme: light;
+  /* Interim light product-studio palette (full zen HUD polish in later PR) */
+  --bg: #e6e1d8;
+  --panel: rgba(255, 255, 255, 0.55);
+  --panel-border: rgba(80, 72, 60, 0.12);
+  --text: #2a2824;
+  --muted: #6a6560;
+  --accent: #5a7a52;
+  --accent-dim: #3d5a38;
+  --danger: #b05048;
+  --wire: #a88840;
+  --radius: 14px;
+  --shadow: 0 8px 28px rgba(40, 36, 28, 0.1);
   font-family:
     'Segoe UI',
     system-ui,
@@ -65,9 +66,10 @@ body {
 .hud-header h1 {
   margin: 0;
   font-size: 1.15rem;
-  font-weight: 650;
+  font-weight: 600;
   letter-spacing: 0.04em;
-  text-shadow: 0 2px 12px rgba(0, 0, 0, 0.5);
+  color: var(--text);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
 }
 
 .status {
@@ -86,8 +88,8 @@ body {
   border-radius: var(--radius);
   padding: 8px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(10px);
-  -webkit-backdrop-filter: blur(10px);
+  backdrop-filter: blur(14px) saturate(1.1);
+  -webkit-backdrop-filter: blur(14px) saturate(1.1);
   width: fit-content;
   max-width: min(100%, 520px);
 }
@@ -129,9 +131,9 @@ body {
 button {
   appearance: none;
   border: 1px solid transparent;
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(40, 36, 28, 0.05);
   color: var(--text);
-  border-radius: 8px;
+  border-radius: 10px;
   padding: 8px 12px;
   font: inherit;
   font-size: 0.82rem;
@@ -144,7 +146,7 @@ button {
 }
 
 button:hover {
-  background: rgba(255, 255, 255, 0.12);
+  background: rgba(40, 36, 28, 0.1);
 }
 
 button:active {
@@ -160,13 +162,15 @@ button.speed.active {
 
 button[data-tool='wire'].active {
   border-color: var(--wire);
-  background: rgba(201, 168, 76, 0.25);
+  background: rgba(168, 136, 64, 0.22);
+  color: var(--text);
 }
 
 button[data-tool='prune'].active,
 button[data-tool='pinch'].active {
   border-color: var(--danger);
-  background: rgba(196, 92, 74, 0.22);
+  background: rgba(176, 80, 72, 0.18);
+  color: var(--text);
 }
 
 .hint {
@@ -174,7 +178,7 @@ button[data-tool='pinch'].active {
   margin: 0;
   color: var(--muted);
   font-size: 0.75rem;
-  text-shadow: 0 1px 6px rgba(0, 0, 0, 0.6);
+  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
   max-width: 420px;
 }
 

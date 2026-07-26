@@ -1,10 +1,14 @@
 import * as THREE from 'three';
 import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
+import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js';
 import { computeWorldFrames } from '../sim/tree';
 import type { NodeId, TreeState } from '../sim/types';
-import { createGround, createPotGroup } from './pot';
+import { PEDESTAL_HEIGHT, createPotGroup, createStudioBase } from './pot';
 import { createStudioBackgroundTexture } from './textures';
 import { TreeRenderer } from './treeMesh';
+
+/** Local soil surface height above pot base (matches pot.ts). */
+const POT_SOIL_LOCAL_Y = 0.052;
 
 export class BonsaiScene {
   readonly renderer: THREE.WebGLRenderer;
@@ -16,9 +20,13 @@ export class BonsaiScene {
   readonly pointer = new THREE.Vector2();
 
   private pot = createPotGroup();
-  private ground = createGround();
+  private studioBase = createStudioBase();
+  /** Raises pot + tree onto the pedestal top. */
+  private stage = new THREE.Group();
   private dirty = true;
   private bgTex = createStudioBackgroundTexture();
+  private envMap: THREE.Texture | null = null;
+  private pmrem: THREE.PMREMGenerator | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -33,65 +41,86 @@ export class BonsaiScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.2;
+    // Soft product-studio exposure (light linen backdrop)
+    this.renderer.toneMappingExposure = 1.0;
 
     this.scene = new THREE.Scene();
     this.scene.background = this.bgTex;
-    this.scene.fog = new THREE.FogExp2(0x121c16, 0.22);
+    // No heavy fog — product photos stay clear; tiny haze optional later
 
     this.camera = new THREE.PerspectiveCamera(
-      36,
+      32,
       window.innerWidth / window.innerHeight,
       0.01,
       50,
     );
-    this.camera.position.set(0.26, 0.2, 0.3);
+    // Product framing: full pot + canopy with breathing room
+    this.camera.position.set(0.34, 0.24, 0.42);
 
     this.controls = new OrbitControls(this.camera, canvas);
-    this.controls.target.set(0, 0.11, 0);
+    this.controls.target.set(0, PEDESTAL_HEIGHT + 0.12, 0);
     this.controls.enableDamping = true;
     this.controls.dampingFactor = 0.06;
-    this.controls.minDistance = 0.12;
-    this.controls.maxDistance = 1.2;
+    this.controls.minDistance = 0.16;
+    this.controls.maxDistance = 1.5;
     this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.update();
 
-    // Soft studio lighting
-    const hemi = new THREE.HemisphereLight(0xe8f2ff, 0x3d2a1c, 0.55);
+    this.setupEnvironment();
+    this.setupLights();
+
+    this.stage.position.y = PEDESTAL_HEIGHT;
+    this.stage.add(this.pot);
+    this.stage.add(this.treeRenderer.group);
+
+    this.scene.add(this.studioBase);
+    this.scene.add(this.stage);
+
+    window.addEventListener('resize', this.onResize);
+  }
+
+  private setupEnvironment(): void {
+    this.pmrem = new THREE.PMREMGenerator(this.renderer);
+    this.pmrem.compileEquirectangularShader();
+    const room = new RoomEnvironment();
+    const envRT = this.pmrem.fromScene(room, 0.04);
+    this.envMap = envRT.texture;
+    this.scene.environment = this.envMap;
+    // Soften indoor room tint toward neutral daylight
+    this.scene.environmentIntensity = 0.55;
+    room.dispose();
+  }
+
+  private setupLights(): void {
+    // Soft cool sky / warm floor bounce via hemisphere
+    const hemi = new THREE.HemisphereLight(0xf2f6ff, 0xc8b8a4, 0.42);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff2dd, 1.65);
-    sun.position.set(0.85, 1.9, 1.15);
+    // Primary key — soft north-window daylight
+    const sun = new THREE.DirectionalLight(0xfff6ea, 1.35);
+    sun.position.set(0.75, 2.1, 1.05);
     sun.castShadow = true;
     sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 0.05;
-    sun.shadow.camera.far = 5;
-    sun.shadow.camera.left = -0.45;
-    sun.shadow.camera.right = 0.45;
-    sun.shadow.camera.top = 0.5;
-    sun.shadow.camera.bottom = -0.15;
-    sun.shadow.bias = -0.00025;
-    sun.shadow.normalBias = 0.02;
+    sun.shadow.camera.far = 6;
+    sun.shadow.camera.left = -0.55;
+    sun.shadow.camera.right = 0.55;
+    sun.shadow.camera.top = 0.55;
+    sun.shadow.camera.bottom = -0.2;
+    sun.shadow.bias = -0.0002;
+    sun.shadow.normalBias = 0.018;
+    sun.shadow.radius = 2.5;
     this.scene.add(sun);
 
-    const fill = new THREE.DirectionalLight(0xb0c8ff, 0.4);
-    fill.position.set(-1.4, 0.7, -0.9);
+    // Cool fill (opposite, dim)
+    const fill = new THREE.DirectionalLight(0xd8e4ff, 0.28);
+    fill.position.set(-1.5, 0.85, -0.7);
     this.scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xd0ecc0, 0.28);
-    rim.position.set(0.15, 0.5, -1.3);
+    // Subtle rim for silhouette separation
+    const rim = new THREE.DirectionalLight(0xffffff, 0.18);
+    rim.position.set(0.1, 0.55, -1.4);
     this.scene.add(rim);
-
-    // Soft bounce from ground plane
-    const bounce = new THREE.DirectionalLight(0x8a7058, 0.18);
-    bounce.position.set(0, -1, 0.2);
-    this.scene.add(bounce);
-
-    this.scene.add(this.ground);
-    this.scene.add(this.pot);
-    this.scene.add(this.treeRenderer.group);
-
-    window.addEventListener('resize', this.onResize);
   }
 
   private onResize = () => {
@@ -125,19 +154,22 @@ export class BonsaiScene {
       maxY = Math.max(maxY, f.tip[1], f.base[1]);
       maxR = Math.max(maxR, Math.hypot(f.tip[0], f.tip[2]));
     }
-    const soil = 0.052;
+    const soil = PEDESTAL_HEIGHT + POT_SOIL_LOCAL_Y;
     const height = maxY + soil;
-    const targetY = Math.min(0.28, Math.max(0.09, height * 0.45));
+    // Aim mid-canopy so pot doesn't dominate the product frame
+    const targetY = Math.min(0.36, Math.max(0.11, soil + maxY * 0.38));
     this.controls.target.y += (targetY - this.controls.target.y) * 0.15;
 
     const desiredDist = Math.min(
-      0.85,
-      Math.max(0.22, Math.max(height * 1.6, maxR * 3.2) + 0.12),
+      1.05,
+      Math.max(0.28, Math.max(height * 1.75, maxR * 3.4) + 0.16),
     );
     const offset = this.camera.position.clone().sub(this.controls.target);
     const dist = offset.length() || desiredDist;
-    if (dist < desiredDist * 0.92) {
-      offset.setLength(dist + (desiredDist - dist) * 0.2);
+    // Pull back if too close; also ease out if far above target
+    if (dist < desiredDist * 0.92 || dist > desiredDist * 1.35) {
+      const next = dist + (desiredDist - dist) * 0.18;
+      offset.setLength(next);
       this.camera.position.copy(this.controls.target).add(offset);
     }
     this.controls.update();
@@ -172,19 +204,20 @@ export class BonsaiScene {
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
 
-    const tip = new THREE.Vector3(...frame.tip);
-    tip.add(this.treeRenderer.group.position);
+    // Frames are local to the tree group (includes soil offset + stage).
+    const tipWorld = new THREE.Vector3(...frame.tip);
+    this.treeRenderer.group.localToWorld(tipWorld);
+
     const plane = new THREE.Plane().setFromNormalAndCoplanarPoint(
       this.camera.getWorldDirection(new THREE.Vector3()).negate(),
-      tip,
+      tipWorld,
     );
     const hit = new THREE.Vector3();
     if (!this.raycaster.ray.intersectPlane(plane, hit)) return null;
 
-    const base = new THREE.Vector3(...frame.base).add(
-      this.treeRenderer.group.position,
-    );
-    const dir = hit.sub(base).normalize();
+    const baseWorld = new THREE.Vector3(...frame.base);
+    this.treeRenderer.group.localToWorld(baseWorld);
+    const dir = hit.sub(baseWorld).normalize();
     return [dir.x, dir.y, dir.z];
   }
 
@@ -198,6 +231,8 @@ export class BonsaiScene {
     this.controls.dispose();
     this.treeRenderer.dispose();
     this.bgTex.dispose();
+    this.envMap?.dispose();
+    this.pmrem?.dispose();
     this.renderer.dispose();
   }
 }
