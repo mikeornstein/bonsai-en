@@ -72,10 +72,19 @@ export function formatAge(days: number): string {
   return `${Math.floor(y)} years`;
 }
 
-/** Soft vitality word from reserves (arbitrary units ~0–40+). */
-export function vitalityWord(reserves: number): string {
-  if (reserves < 6) return 'Low';
-  if (reserves < 14) return 'Fair';
+/** True when low sap is seasonal rest, not distress. */
+export function isRestSeason(season: Season | undefined | null): boolean {
+  return season === 'dormant' || season === 'rest';
+}
+
+/**
+ * Soft vitality word from reserves (arbitrary units ~0–40+).
+ * Pass season so dormant / late-rest low sap reads as rest, not death.
+ */
+export function vitalityWord(reserves: number, season?: Season): string {
+  const resting = isRestSeason(season);
+  if (reserves < 6) return resting ? 'Resting' : 'Low';
+  if (reserves < 14) return resting ? 'Quiet sap' : 'Fair';
   if (reserves < 24) return 'Steady';
   if (reserves < 34) return 'Strong';
   return 'Abundant';
@@ -84,4 +93,20 @@ export function vitalityWord(reserves: number): string {
 /** Bar fill 0–1 from reserves. */
 export function vitalityLevel(reserves: number): number {
   return Math.max(0, Math.min(1, reserves / 36));
+}
+
+/**
+ * HUD bar color token: winter rest uses a cool muted tone, not danger red.
+ * CSS vars when available; hex fallbacks for tests / SSR.
+ */
+export function vitalityBarColor(reserves: number, season?: Season): string {
+  const level = vitalityLevel(reserves);
+  const resting = isRestSeason(season);
+  if (level < 0.25) {
+    return resting ? '#6a7a8a' : 'var(--danger)';
+  }
+  if (level < 0.45) {
+    return resting ? '#7a8a78' : '#a08a4a';
+  }
+  return 'var(--accent)';
 }

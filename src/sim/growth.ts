@@ -374,6 +374,18 @@ export function tickDay(tree: TreeState): GrowthStats {
     250,
   );
 
+  // Soft winter cushion: healthy trees keep minimal storage through dormancy /
+  // late rest so Years fast-forward does not flash "plant death" (play #32).
+  // Real stress (low vigor) still drains freely.
+  if (
+    (env.season === 'dormant' || env.season === 'rest') &&
+    tree.vigor >= 0.55
+  ) {
+    // ~6.5 at vigor 0.55 → ~8.3 at vigor 1.0 (Fair band, not Low)
+    const cushion = 6.5 + 4 * (tree.vigor - 0.55);
+    tree.reserves = Math.max(tree.reserves, cushion);
+  }
+
   // 6. Wire set + lignification
   applyWireAndLignification(tree, species, seasonMul);
 
