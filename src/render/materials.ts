@@ -179,15 +179,16 @@ export function createGritMaterial(): THREE.MeshStandardMaterial {
   });
 }
 
-/** Dull aluminum / copper training wire — higher env response for garden IBL. */
+/** Bright copper-aluminum training wire — higher env response for garden IBL. */
 export function createWireMaterial(): THREE.MeshPhysicalMaterial {
   return new THREE.MeshPhysicalMaterial({
-    color: new THREE.Color('#b0a090'),
-    roughness: 0.45,
-    metalness: 0.84,
-    clearcoat: 0.08,
-    clearcoatRoughness: 0.5,
-    envMapIntensity: 0.85,
+    color: new THREE.Color('#d1ad6b'),
+    roughness: 0.28,
+    metalness: 0.92,
+    clearcoat: 0.12,
+    clearcoatRoughness: 0.4,
+    envMapIntensity: 1.05,
+    emissive: new THREE.Color('#1f0c05'),
   });
 }
 

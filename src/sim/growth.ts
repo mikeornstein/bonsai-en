@@ -427,8 +427,13 @@ export function describeNode(tree: TreeState, nodeId: string): string {
         : 'young wood';
   const parts = [wood];
   if (n.wire) {
+    const pct = Math.round(n.wire.setAmount * 100);
     parts.push(
-      n.wire.setAmount > 0.85 ? 'wire set' : n.wire.setAmount > 0.35 ? 'wiring' : 'fresh wire',
+      n.wire.setAmount > 0.85
+        ? `wire set (${pct}%)`
+        : n.wire.setAmount > 0.35
+          ? `wiring · ${pct}% set`
+          : `fresh wire · ${pct}% set`,
     );
   }
   if (n.wound > 0.4) parts.push('fresh cut');

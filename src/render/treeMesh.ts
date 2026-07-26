@@ -720,10 +720,11 @@ export class TreeRenderer {
   }
 
   /**
-   * Training wire — dulls as setAmount rises (visual lignify cue).
+   * Training wire — readable without debug; dulls as setAmount rises.
    * Helix is baked in local +Y (length fixed at rebuild); applyPose re-orients
    * the mesh from live frames without reallocating TubeGeometry.
-   * setAmount 0 = bright training metal; 1 = dull held wood.
+   * setAmount 0 = bright copper-aluminum coil (fresh); 1 = dull bronze (set).
+   * Color + thickness + metalness all shift so set progress is glanceable.
    */
   private addWireVisual(
     nodeId: NodeId,
@@ -740,7 +741,8 @@ export class TreeRenderer {
     const points: THREE.Vector3[] = [];
     const turns = 4;
     const segs = 40;
-    const amp = radius + 0.0014;
+    // Slightly larger coil amp so wire reads at a glance
+    const amp = radius + 0.0017;
     for (let i = 0; i <= segs; i++) {
       const t = i / segs;
       const ang = t * turns * Math.PI * 2;
@@ -749,20 +751,26 @@ export class TreeRenderer {
       );
     }
     const curve = new THREE.CatmullRomCurve3(points);
-    // Slightly thinner as set progresses (wire less dominant when wood holds)
-    const tubeR = 0.00055 * (1 - setAmount * 0.25);
+    // Thicker when fresh; thinner as wood holds the bend
+    const tubeR = 0.00072 * (1 - setAmount * 0.35);
     const geo = new THREE.TubeGeometry(curve, segs, tubeR, 6, false);
     const mat = this.wireMat!.clone();
-    // Dull aluminum → dark oxidized as set progresses
+    // Fresh: bright warm copper-aluminum; set: cool dull bronze
     const dull = Math.max(setAmount, lignification * 0.35);
     mat.color.setRGB(
-      0.69 - dull * 0.28,
-      0.63 - dull * 0.22,
-      0.56 - dull * 0.12,
+      0.82 - dull * 0.42, // warm → muted
+      0.68 - dull * 0.28,
+      0.42 - dull * 0.08,
     );
-    mat.metalness = 0.84 - dull * 0.45;
-    mat.roughness = 0.45 + dull * 0.4;
-    mat.envMapIntensity = 0.85 - dull * 0.5;
+    mat.metalness = 0.92 - dull * 0.55;
+    mat.roughness = 0.28 + dull * 0.52;
+    mat.envMapIntensity = 1.05 - dull * 0.65;
+    // Soft copper glow when freshly wired (set progress cue)
+    mat.emissive = new THREE.Color().setRGB(
+      0.12 * (1 - dull),
+      0.05 * (1 - dull),
+      0.02 * (1 - dull),
+    );
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.userData.disposeMat = true;
