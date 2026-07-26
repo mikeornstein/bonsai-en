@@ -12,36 +12,112 @@ This file is the short playbook for future Grok (and other agents) working on **
 | Repo | `mikeornstein/bonsai-en` |
 | Live base path | `/bonsai-en/` (Vite `base` when `GITHUB_PAGES=true`) |
 | Live URLs | `https://mikeornstein.github.io/bonsai-en/` and custom domain under `mikeornstein.com/bonsai-en/` |
-| Git model | **Feature branches + PRs only** — never push commits directly to `main` |
+| Git model | **Issues → branches → PRs** — never commit or push directly to `main` |
 
-## Branching and pull requests (required)
+## Tickets, branches, and pull requests (required)
 
-**Hard rules for agents:**
+Work is **ticket-driven**. Every change ships on a **branch** that references a **GitHub issue**. Issues close only when the work is fully done (via merged PR(s)).
 
-1. **Never** commit on `main` for feature work.  
-2. **Never** `git push origin main` (or push a branch named `main` with new work).  
-3. All changes land on `main` only via **pull request** (merge or squash after checks).  
-4. Start from an up-to-date `main`, cut a feature branch, push that branch, open a PR.
+### Hard rules for agents
+
+1. **Never** commit on `main` for product work.  
+2. **Never** `git push origin main` (or push new work on a branch named `main`).  
+3. **All work is done on branches** — implement, test, commit, and push only on the feature branch.  
+4. **Every branch references an issue** — branch name and PR body include the issue number.  
+5. Changes land on `main` **only** via pull request (merge or squash after checks).  
+6. **Issues close when the work is complete** — not when a partial PR opens. Use GitHub closing keywords so the last resolving PR closes the issue.
+
+### Ticket workflow
+
+```text
+Issue (ticket)  →  branch named with issue #  →  one or more PRs  →  merge  →  issue closes
+```
+
+| Step | What agents do |
+|------|----------------|
+| **1. Pick or create a ticket** | Use an existing open issue, or `gh issue create` if the user asked for work with no ticket. Prefer epics/children already labeled (`art-direction`, `phase-a`, …). |
+| **2. Branch from up-to-date `main`** | Branch name **must** include the issue number (see naming below). |
+| **3. Implement only on that branch** | Commits stay off `main`. Link commits with `(#N)` when helpful. |
+| **4. Open a PR into `main`** | PR title/body **must** reference `#N`. |
+| **5. Resolve the issue via PR(s)** | When the PR **fully** satisfies the issue acceptance criteria, use a closing keyword. If more PRs are still needed, use a non-closing reference. |
+| **6. After merge** | Pull `main`, delete the local branch, confirm the issue state. |
+
+### Branch naming
+
+Always include the issue number:
+
+```text
+type/<issue-number>-short-kebab-description
+```
+
+| Type | Use |
+|------|-----|
+| `feat/` | New capability |
+| `fix/` | Bugfix |
+| `docs/` | Documentation only |
+| `chore/` | Tooling, deps, CI |
+| `refactor/` | Structure without behavior change |
+| `test/` | Tests only |
+
+Examples:
+
+```text
+feat/10-hud-quiet-pass
+fix/42-wire-springback
+docs/9-agents-ticket-workflow
+```
+
+No issue yet? Create one first, then branch — do not invent `feat/wip-no-ticket` for real product work.
+
+### Issue ↔ PR linking (closing rules)
+
+| Situation | In the PR body (or title) | Issue result |
+|-----------|---------------------------|--------------|
+| This PR **fully** resolves the issue (acceptance criteria met) | `Closes #N` or `Fixes #N` | Issue **closes** when the PR merges |
+| This PR is **partial** work; more PRs will follow | `Refs #N` or `Part of #N` — **do not** use Closes/Fixes | Issue **stays open** |
+| Multiple PRs required | Only the **last** PR that completes the issue uses `Closes #N`; earlier PRs use `Refs #N` | Issue closes when the final PR merges |
+| PR abandoned / wrong approach | Close the PR without `Closes`; leave the issue open or comment why | Issue stays open until real resolution |
+
+GitHub auto-closes on merge when the PR body contains `Closes #N` / `Fixes #N` / `Resolves #N` (against the default branch). Prefer putting the keyword in the **PR body**, not only the commit message.
+
+**Do not** manually close an issue while related open PRs still claim to address it, or while acceptance criteria remain unmet. **Do** re-open (or comment) if a “closed” issue regressed.
 
 ### Standard flow
 
 ```bash
+# 0) Know the ticket
+gh issue view <N>
+# or create: gh issue create --title "…" --body "…"
+
 git fetch origin
 git checkout main
 git pull origin main
 
-# Branch naming: type/short-kebab-description
-git checkout -b feat/improve-juniper-foliage
-# types: feat/ fix/ docs/ chore/ refactor/ test/
+# 1) Branch always carries the issue number
+git checkout -b feat/<N>-short-kebab-description
 
-# … implement, test, screenshot if visual …
+# 2) … implement, test, screenshot if visual … (all on this branch)
 
 git add …
-git commit -m "…"
+git commit -m "Describe change (#N)"
 git push -u origin HEAD
 
-# Open PR into main (do not push to main)
-gh pr create --base main --title "…" --body "…"
+# 3) PR into main — link the issue; close only if fully done
+gh pr create --base main --title "feat: short title (#N)" --body "$(cat <<'EOF'
+## Summary
+- …
+
+## Issue
+Closes #<N>
+# or: Refs #<N>   ← if more work remains after this PR
+
+## Test plan
+- [ ] npm test
+- [ ] npm run build
+- [ ] screenshots (if visual)
+- [ ] issue acceptance criteria satisfied (if Closes)
+EOF
+)"
 ```
 
 After review / green CI:
@@ -51,31 +127,61 @@ After review / green CI:
 gh pr merge --squash   # or --merge, per team preference
 git checkout main
 git pull origin main
-git branch -d feat/improve-juniper-foliage   # optional cleanup
+git branch -d feat/<N>-short-kebab-description   # optional cleanup
+
+# Confirm ticket state when you used Closes
+gh issue view <N>   # should be CLOSED if the PR fully resolved it
 ```
+
+### Multiple PRs for one issue
+
+Split large tickets when needed (e.g. scaffolding then polish), but:
+
+1. Every PR still targets the **same issue number** (`Refs #N` or `Closes #N`).  
+2. Keep a short comment on the issue listing open/merged PRs if the chain is non-obvious.  
+3. Only the PR that meets **all** acceptance criteria uses `Closes #N`.  
+4. Do not open orphan branches with no issue.
 
 ### When the user says “commit and push”
 
 Interpret as:
 
-1. Commit on the **current feature branch** (create one if still on `main`).  
-2. Push **that branch** to `origin`.  
-3. Open or update a **PR to `main`** if one does not exist.  
-4. **Do not** push to `main`.
+1. Ensure work is on a **feature branch tied to an issue** (create issue + branch if still on `main` or untracked).  
+2. Commit on **that branch**.  
+3. Push **that branch** to `origin`.  
+4. Open or update a **PR to `main`** that references the issue.  
+5. **Do not** push to `main`.
 
 If already on `main` with dirty work:
 
 ```bash
+# Prefer attaching to an existing open issue; otherwise create one
+N=$(gh issue create --title "…" --body "…" | grep -oE '[0-9]+$')
 git fetch origin
-git checkout -b feat/describe-change
-git add … && git commit -m "…"
+git checkout -b feat/${N}-describe-change
+git add … && git commit -m "… (#${N})"
 git push -u origin HEAD
-gh pr create --base main --fill   # or explicit title/body
+gh pr create --base main --title "… (#${N})" --body "Closes #${N}"
 ```
+
+### When the user says “work on ticket N” / “do issue N”
+
+```bash
+gh issue view N
+git fetch origin && git checkout main && git pull origin main
+git checkout -b feat/N-short-slug-from-title
+# implement acceptance criteria from the issue body
+# open PR with Closes #N (or Refs #N if splitting)
+```
+
+If a branch for `N` already exists remotely, check it out / continue that PR instead of forking a duplicate.
 
 ### PR checklist (agent)
 
-- [ ] Branch is not `main`  
+- [ ] Branch is **not** `main`  
+- [ ] Branch name includes **issue number** (`type/N-slug`)  
+- [ ] PR body has `Closes #N` **or** `Refs #N` (always one of these)  
+- [ ] `Closes` only if this PR fully meets the issue’s acceptance criteria  
 - [ ] `npm test` and `npm run build` pass locally  
 - [ ] Visual changes: `npm run screenshots` reviewed  
 - [ ] PR targets `main` with a clear summary  
@@ -83,6 +189,16 @@ gh pr create --base main --fill   # or explicit title/body
 
 CI on PRs: **CI** workflow (test + build). Deploy runs only after merge to `main`.
 
+### Finding work
+
+```bash
+gh issue list --limit 20
+gh issue list --label phase-a          # e.g. art-direction phases
+gh issue list --label art-direction
+gh issue view <N>
+```
+
+Epics (e.g. parent art-direction issues) stay open until children are done; child issues close via their own PRs. Do not put all epic work on one branch unless the epic itself is the only ticket.
 ## Default development loop
 
 ```bash
