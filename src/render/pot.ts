@@ -195,22 +195,30 @@ export function createStudioBase(): THREE.Group {
   ground.name = 'ground';
   group.add(ground);
 
-  // Soft shadow catcher ring under pedestal (slightly darker, same plane)
-  const catcher = new THREE.Mesh(
-    new THREE.RingGeometry(0.1, 0.22, 64),
-    new THREE.MeshStandardMaterial({
-      color: new THREE.Color('#b8b2a8'),
-      roughness: 1,
-      metalness: 0,
+  // Soft contact shadow under pedestal (radial falloff disc)
+  const contactCanvas = document.createElement('canvas');
+  contactCanvas.width = contactCanvas.height = 128;
+  const cctx = contactCanvas.getContext('2d')!;
+  const grad = cctx.createRadialGradient(64, 64, 8, 64, 64, 64);
+  grad.addColorStop(0, 'rgba(40, 34, 28, 0.45)');
+  grad.addColorStop(0.45, 'rgba(40, 34, 28, 0.18)');
+  grad.addColorStop(1, 'rgba(40, 34, 28, 0)');
+  cctx.fillStyle = grad;
+  cctx.fillRect(0, 0, 128, 128);
+  const contactTex = new THREE.CanvasTexture(contactCanvas);
+  contactTex.colorSpace = THREE.SRGBColorSpace;
+  const contact = new THREE.Mesh(
+    new THREE.CircleGeometry(0.28, 64),
+    new THREE.MeshBasicMaterial({
+      map: contactTex,
       transparent: true,
-      opacity: 0.35,
       depthWrite: false,
+      opacity: 1,
     }),
   );
-  catcher.rotation.x = -Math.PI / 2;
-  catcher.position.y = 0.0004;
-  catcher.receiveShadow = true;
-  group.add(catcher);
+  contact.rotation.x = -Math.PI / 2;
+  contact.position.y = 0.0006;
+  group.add(contact);
 
   // Short cylindrical stone pedestal with slight bevel via two stacked discs
   const pedH = PEDESTAL_HEIGHT;
