@@ -77,19 +77,27 @@ If the live site loads HTML but JS/CSS 404, the base path is almost always wrong
 
 ---
 
-## 2. Feature branches and pull requests
+## 2. Tickets, feature branches, and pull requests
 
-**Policy:** all development happens on feature branches. Changes reach `main` only through pull requests. **Do not push commits directly to `main`.**
+**Policy:** work is **ticket-driven**. All development happens on **feature branches** that **reference a GitHub issue**. Changes reach `main` only through pull requests. **Do not push commits directly to `main`.** Issues **close when related PR(s) fully resolve them** (use `Closes #N` on the completing PR only).
+
+Canonical short rules: [AGENTS.md](../AGENTS.md) (tickets → branches → PRs).
 
 ### Why
 
 - Keeps `main` deployable and reviewable  
+- Every change is traceable to a ticket  
 - PR CI runs tests/build before merge  
 - Deploy (GitHub Pages) fires only when `main` advances (merged PR)  
+- Issues stay open until acceptance criteria are actually met  
 
 ### Branch naming
 
+Always include the **issue number**:
+
 ```text
+type/<issue-number>-short-kebab-description
+
 feat/…       new capability
 fix/…        bugfix
 docs/…       documentation only
@@ -98,32 +106,45 @@ refactor/…   structure without behavior change
 test/…       tests only
 ```
 
-Examples: `feat/juniper-scale-lod`, `fix/wire-springback`, `docs/pr-workflow`.
+Examples: `feat/10-hud-quiet-pass`, `fix/42-wire-springback`, `docs/9-agents-ticket-workflow`.
+
+### Issue linking
+
+| PR fully done for the ticket | `Closes #N` / `Fixes #N` in PR body → issue closes on merge |
+| PR is partial | `Refs #N` / `Part of #N` → issue stays open |
+| Several PRs | Only the **last** completing PR uses `Closes #N` |
 
 ### Day-to-day flow
 
 ```bash
+gh issue view <N>    # or gh issue create …
+
 git fetch origin
 git checkout main
 git pull origin main
 
-git checkout -b feat/my-change
+git checkout -b feat/<N>-my-change
 
 # implement → npm test → npm run build
 # if visual: npm run screenshots and inspect PNGs
 
 git add -A   # respect .gitignore
-git commit -m "Describe the change in prose."
+git commit -m "Describe the change in prose. (#N)"
 git push -u origin HEAD
 
-gh pr create --base main --title "Short title" --body "$(cat <<'EOF'
+gh pr create --base main --title "Short title (#N)" --body "$(cat <<'EOF'
 ## Summary
 - …
+
+## Issue
+Closes #N
+# or: Refs #N  if more PRs will follow
 
 ## Test plan
 - [ ] npm test
 - [ ] npm run build
 - [ ] screenshots (if visual)
+- [ ] issue acceptance criteria met (if Closes)
 EOF
 )"
 ```
@@ -132,12 +153,11 @@ EOF
 
 Agents and humans should:
 
-1. Ensure work is on a **feature branch** (create one if currently on `main`).  
-2. Commit there.  
+1. Ensure work is on a **feature branch tied to an issue** (create issue + branch if currently on `main`).  
+2. Commit there (not on `main`).  
 3. `git push -u origin HEAD` (the feature branch only).  
-4. Create or update a **PR into `main`**.  
+4. Create or update a **PR into `main`** that references the issue (`Closes` or `Refs`).  
 5. **Never** `git push origin main` with new feature commits.
-
 ### Merging
 
 Prefer GitHub merge (UI or CLI), not a local merge-push to `main`:
