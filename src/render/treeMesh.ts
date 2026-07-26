@@ -7,6 +7,7 @@ import {
   createFoliageMaterial,
   createFoliageTipMaterial,
   createHighlightMaterial,
+  createHighlightRimMaterial,
   createWireMaterial,
 } from './materials';
 import { POT_SOIL_LOCAL_Y } from './pot';
@@ -57,10 +58,12 @@ export class TreeRenderer {
   private foliageTipMat: THREE.MeshPhysicalMaterial | null = null;
   private wireMat: THREE.MeshPhysicalMaterial | null = null;
   private highlightMat: THREE.MeshBasicMaterial | null = null;
+  private highlightRimMat: THREE.MeshBasicMaterial | null = null;
   private branchGroup = new THREE.Group();
   private foliageGroup = new THREE.Group();
   private wireGroup = new THREE.Group();
   private highlightMesh: THREE.Mesh | null = null;
+  private highlightRim: THREE.Mesh | null = null;
   private selectedId: NodeId | null = null;
   private scaleGeo: THREE.BufferGeometry | null = null;
   private radialSegments = 14;
@@ -86,6 +89,7 @@ export class TreeRenderer {
     if (!this.foliageTipMat) this.foliageTipMat = createFoliageTipMaterial();
     if (!this.wireMat) this.wireMat = createWireMaterial();
     if (!this.highlightMat) this.highlightMat = createHighlightMaterial();
+    if (!this.highlightRimMat) this.highlightRimMat = createHighlightRimMaterial();
     if (!this.scaleGeo) this.scaleGeo = createScaleGeometry();
   }
 
@@ -107,6 +111,11 @@ export class TreeRenderer {
       this.group.remove(this.highlightMesh);
       this.highlightMesh.geometry.dispose();
       this.highlightMesh = null;
+    }
+    if (this.highlightRim) {
+      this.group.remove(this.highlightRim);
+      this.highlightRim.geometry.dispose();
+      this.highlightRim = null;
     }
 
     const live = frames ?? computeWorldFrames(tree);
@@ -148,15 +157,29 @@ export class TreeRenderer {
       const node = tree.nodes[this.selectedId];
       const frame = live.get(this.selectedId)!;
       if (node) {
-        const r = Math.max(node.radius, MIN_VISUAL_RADIUS) * 1.35;
+        const baseR = Math.max(node.radius, MIN_VISUAL_RADIUS);
+        // Soft moss wash — slight overscale, not neon tube
+        const r = baseR * 1.22;
         this.highlightMesh = this.makeTaperedSegment(
           r,
-          r * 0.9,
+          r * 0.88,
           frame,
           this.highlightMat!,
         );
         this.highlightMesh.userData.nodeId = this.selectedId;
+        this.highlightMesh.renderOrder = 2;
         this.group.add(this.highlightMesh);
+        // Thin ink rim (backside shell) for edge read on green pads
+        const rimR = baseR * 1.38;
+        this.highlightRim = this.makeTaperedSegment(
+          rimR,
+          rimR * 0.9,
+          frame,
+          this.highlightRimMat!,
+        );
+        this.highlightRim.userData.nodeId = this.selectedId;
+        this.highlightRim.renderOrder = 1;
+        this.group.add(this.highlightRim);
       }
     }
   }
@@ -176,9 +199,12 @@ export class TreeRenderer {
       }
     }
 
-    if (this.highlightMesh && this.selectedId) {
+    if (this.selectedId) {
       const frame = frames.get(this.selectedId);
-      if (frame) this.placeSegment(this.highlightMesh, frame);
+      if (frame) {
+        if (this.highlightMesh) this.placeSegment(this.highlightMesh, frame);
+        if (this.highlightRim) this.placeSegment(this.highlightRim, frame);
+      }
     }
 
     // Foliage follows host segments (rigid attachment in phase 1)
@@ -549,6 +575,7 @@ export class TreeRenderer {
     if (this.foliageTipMat) sharedMats.add(this.foliageTipMat);
     if (this.wireMat) sharedMats.add(this.wireMat);
     if (this.highlightMat) sharedMats.add(this.highlightMat);
+    if (this.highlightRimMat) sharedMats.add(this.highlightRimMat);
     while (g.children.length) {
       const c = g.children.pop()!;
       if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) {
@@ -577,5 +604,6 @@ export class TreeRenderer {
     this.foliageTipMat?.dispose();
     this.wireMat?.dispose();
     this.highlightMat?.dispose();
+    this.highlightRimMat?.dispose();
   }
 }
