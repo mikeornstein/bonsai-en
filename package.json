@@ -9,6 +9,7 @@
     "preview": "vite preview",
     "test": "vitest run",
     "test:watch": "vitest",
+    "test:smoke": "node scripts/smoke-boot.mjs",
     "screenshots": "node scripts/screenshot.mjs"
   },
   "dependencies": {

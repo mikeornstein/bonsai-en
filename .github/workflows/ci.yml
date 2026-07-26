@@ -25,7 +25,19 @@ jobs:
           cache: npm
       - run: npm ci
       - run: npm test
+      # Default base "/" for smoke (WebGL boot) + path-prefix build check
       - run: npm run build
-        env:
-          # Same base as production so PRs catch asset path issues
-          GITHUB_PAGES: 'true'
+      - name: Boot smoke
+        run: |
+          npx vite preview --host 127.0.0.1 --port 4173 &
+          for i in $(seq 1 40); do
+            if curl -sf http://127.0.0.1:4173/ >/dev/null; then break; fi
+            sleep 0.5
+          done
+          # Fail if HUD stays on HTML defaults or UI never binds
+          BOOT_URL=http://127.0.0.1:4173/ npm run test:smoke
+      - name: GitHub Pages base path build
+        run: |
+          GITHUB_PAGES=true npm run build
+          grep -q '/bonsai-en/' dist/index.html
+

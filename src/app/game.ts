@@ -6,7 +6,7 @@ import {
   seasonLabel,
   type SpeedMode,
 } from '../sim/time';
-import { createSapling } from '../sim/tree';
+import { createSapling, ensurePlayableTree } from '../sim/tree';
 import { pinchAt, pruneAt } from '../sim/tools/prune';
 import { applyWire, bendWiredNode, removeWire } from '../sim/tools/wire';
 import { downloadTree, parseTree } from '../sim/serialize';
@@ -51,11 +51,10 @@ export class Game {
     this.bindUi();
     this.bindPointer(canvas);
 
-    this.tree = this.bootstrapTree();
-    // Recover bad autosaves before first paint
-    if (!this.tree.rootId || !this.tree.nodes[this.tree.rootId]) {
+    const boot = ensurePlayableTree(this.bootstrapTree());
+    this.tree = boot.tree;
+    if (boot.recovered) {
       console.warn('[bonsai-en] invalid tree state, creating new sapling');
-      this.tree = createSapling();
       clearLocal();
       this.setStatus('Started a new sapling (previous save was invalid)');
     }
