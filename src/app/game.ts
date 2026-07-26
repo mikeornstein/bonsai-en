@@ -4,6 +4,7 @@ import {
   environmentAt,
   formatAge,
   seasonLabel,
+  vitalityBarColor,
   vitalityLevel,
   vitalityWord,
   type SpeedMode,
@@ -172,7 +173,7 @@ export class Game {
       agePlantDays: this.tree.agePlantDays,
       ageLabel: formatAge(this.tree.agePlantDays),
       season: seasonLabel(env.season),
-      vitalityWord: vitalityWord(this.tree.reserves),
+      vitalityWord: vitalityWord(this.tree.reserves, env.season),
       reserves: this.tree.reserves,
       nodeCount: nodes.length,
       livingCount: nodes.filter((n) => n.living).length,
@@ -651,13 +652,12 @@ export class Game {
 
     const reserves = this.tree.reserves;
     const wordEl = document.getElementById('info-reserves');
-    if (wordEl) wordEl.textContent = vitalityWord(reserves);
+    if (wordEl) wordEl.textContent = vitalityWord(reserves, env.season);
     const bar = document.getElementById('info-vitality-bar');
     if (bar) {
       const level = vitalityLevel(reserves);
       bar.style.width = `${Math.round(level * 100)}%`;
-      bar.style.background =
-        level < 0.25 ? 'var(--danger)' : level < 0.45 ? '#a08a4a' : 'var(--accent)';
+      bar.style.background = vitalityBarColor(reserves, env.season);
     }
 
     const nodesEl = document.getElementById('info-nodes');
