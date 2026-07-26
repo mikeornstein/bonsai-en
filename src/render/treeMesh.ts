@@ -9,9 +9,12 @@ import {
   createHighlightMaterial,
   createWireMaterial,
 } from './materials';
+import { POT_SOIL_LOCAL_Y } from './pot';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const MIN_VISUAL_RADIUS = 0.0018;
+const MIN_VISUAL_RADIUS = 0.0016;
+/** Soft cap so large trees stay interactive on mobile / headless. */
+const MAX_SCALE_INSTANCES = 9000;
 
 interface ScaleInstance {
   position: THREE.Vector3;
@@ -21,13 +24,19 @@ interface ScaleInstance {
 }
 
 /**
- * Builds a single thin scale (rhombus leaf) in the XY plane, tip +Y.
- * Explicit UVs map the full texture (alpha diamond) onto the quad.
+ * Slightly cupped scale quad — better light catch than a flat plane.
  */
 function createScaleGeometry(): THREE.BufferGeometry {
-  // Unit quad, tip toward +Y — simpler UVs than ShapeGeometry
-  const geo = new THREE.PlaneGeometry(1, 1.25, 1, 1);
-  geo.translate(0, 0.15, 0);
+  const geo = new THREE.PlaneGeometry(1, 1.3, 2, 2);
+  const pos = geo.attributes.position;
+  for (let i = 0; i < pos.count; i++) {
+    const x = pos.getX(i);
+    const y = pos.getY(i);
+    // Gentle cup along X; tip lifts slightly
+    const cup = (1 - x * x) * 0.08;
+    pos.setZ(i, cup);
+    pos.setY(i, y + 0.12);
+  }
   geo.computeVertexNormals();
   return geo;
 }
@@ -45,8 +54,9 @@ export class TreeRenderer {
   private highlightMesh: THREE.Mesh | null = null;
   private selectedId: NodeId | null = null;
   private scaleGeo = createScaleGeometry();
-  private radialSegments = 10;
+  private radialSegments = 14;
   private readonly _dummy = new THREE.Object3D();
+  private readonly _jointGeo = new THREE.SphereGeometry(1, 12, 10);
 
   readonly pickables: THREE.Object3D[] = [];
 
@@ -71,7 +81,7 @@ export class TreeRenderer {
     }
 
     const frames = computeWorldFrames(tree);
-    this.group.position.set(0, 0.052, 0);
+    this.group.position.set(0, POT_SOIL_LOCAL_Y, 0);
 
     const scales: ScaleInstance[] = [];
 
@@ -85,6 +95,21 @@ export class TreeRenderer {
       if (node.wire) {
         this.addWireVisual(frame, Math.max(node.radius, MIN_VISUAL_RADIUS));
       }
+    }
+
+    // Soft cap for performance on large trees
+    if (scales.length > MAX_SCALE_INSTANCES) {
+      // Prefer keeping tips; subsample mature pads
+      const tips = scales.filter((s) => s.tip);
+      const mature = scales.filter((s) => !s.tip);
+      const budget = Math.max(0, MAX_SCALE_INSTANCES - tips.length);
+      const step = Math.max(1, Math.ceil(mature.length / Math.max(1, budget)));
+      const kept: ScaleInstance[] = [...tips];
+      for (let i = 0; i < mature.length && kept.length < MAX_SCALE_INSTANCES; i += step) {
+        kept.push(mature[i]);
+      }
+      scales.length = 0;
+      scales.push(...kept);
     }
 
     this.buildInstancedFoliage(scales);
@@ -116,7 +141,11 @@ export class TreeRenderer {
     frame: NodeWorld,
     tree: TreeState,
   ): void {
-    const r0 = this.visualRadius(node.radius);
+    let r0 = this.visualRadius(node.radius);
+    // Nebari flare on root internode
+    if (node.parentId === null) {
+      r0 *= 1.55;
+    }
     let r1 = r0 * 0.82;
     if (node.children.length) {
       let sum = 0;
@@ -131,9 +160,18 @@ export class TreeRenderer {
     const mat = barkMaterialForSegment(this.barkMat, node.length, node.radius);
     // Younger / thinner shoots: greener cambium tint
     const youth = Math.max(0, 1 - node.lignification);
-    if (youth > 0.2) {
-      mat.color.offsetHSL(0.05, 0.08 * youth, 0.04 * youth);
-      mat.roughness = Math.max(0.55, 1 - youth * 0.25);
+    if (youth > 0.15) {
+      mat.color.offsetHSL(0.06, 0.1 * youth, 0.05 * youth);
+      mat.roughness = Math.max(0.5, 1 - youth * 0.28);
+      if (mat.normalScale) {
+        mat.normalScale.set(0.45 + youth * 0.2, 0.45 + youth * 0.2);
+      }
+    } else {
+      // Mature trunk: stronger normal, cooler tint
+      mat.color.offsetHSL(-0.02, -0.04, -0.03);
+      if (mat.normalScale) {
+        mat.normalScale.set(1.15, 1.15);
+      }
     }
 
     const mesh = this.makeTaperedSegment(r0, r1, frame, mat);
@@ -143,6 +181,27 @@ export class TreeRenderer {
     mesh.receiveShadow = true;
     this.branchGroup.add(mesh);
     this.pickables.push(mesh);
+
+    // Joint collar at base — hides cylinder seams
+    const jointR = r0 * 1.02;
+    const joint = new THREE.Mesh(this._jointGeo, mat);
+    joint.position.set(...frame.base);
+    joint.scale.set(jointR, jointR * 0.85, jointR);
+    joint.castShadow = true;
+    joint.receiveShadow = true;
+    joint.userData.nodeId = id;
+    this.branchGroup.add(joint);
+
+    // Tip joint when branching (collar into children)
+    if (node.children.length > 0) {
+      const tipJoint = new THREE.Mesh(this._jointGeo, mat);
+      tipJoint.position.set(...frame.tip);
+      tipJoint.scale.set(r1 * 1.05, r1 * 0.9, r1 * 1.05);
+      tipJoint.castShadow = true;
+      tipJoint.receiveShadow = true;
+      tipJoint.userData.nodeId = id;
+      this.branchGroup.add(tipJoint);
+    }
   }
 
   private makeTaperedSegment(
@@ -159,7 +218,6 @@ export class TreeRenderer {
       1,
       false,
     );
-    // Cylinder default UV: U around, V along height — good for bark grain
     const mesh = new THREE.Mesh(geo, mat);
     this.placeSegment(mesh, frame);
     return mesh;
@@ -178,7 +236,7 @@ export class TreeRenderer {
   }
 
   /**
-   * Place juniper-like scale clusters on outer wood only.
+   * Dense multi-layer juniper scale pads on outer wood.
    */
   private collectScales(
     node: Internode,
@@ -188,7 +246,7 @@ export class TreeRenderer {
   ): void {
     const isTip = node.children.length === 0;
     // Bare structural trunk — keep lower thick wood clean
-    if (node.radius >= 0.0065 && !isTip && node.children.length > 1) return;
+    if (node.radius >= 0.007 && !isTip && node.children.length > 1) return;
 
     const living = node.foliage.filter((f) => f.living);
     // Synthetic pad if sim has no foliage clusters on thin shoots
@@ -201,12 +259,23 @@ export class TreeRenderer {
             ageDays: f.ageDays,
             efficiency: f.efficiency,
           }))
-        : isTip || node.radius < 0.0045
+        : isTip || node.radius < 0.005
           ? [
-              { t: 0.7, azimuth: 0.3, area: 0.0004, ageDays: 10, efficiency: 1 },
-              { t: 0.95, azimuth: 2.1, area: 0.00035, ageDays: 5, efficiency: 1 },
+              { t: 0.45, azimuth: 0.2, area: 0.00045, ageDays: 40, efficiency: 1 },
+              { t: 0.7, azimuth: 1.4, area: 0.0004, ageDays: 18, efficiency: 1 },
+              { t: 0.92, azimuth: 2.6, area: 0.00038, ageDays: 6, efficiency: 1 },
             ]
-          : [];
+          : node.radius < 0.0065
+            ? [
+                {
+                  t: 0.75,
+                  azimuth: 0.8,
+                  area: 0.0003,
+                  ageDays: 30,
+                  efficiency: 0.9,
+                },
+              ]
+            : [];
 
     if (!sites.length) return;
 
@@ -230,14 +299,21 @@ export class TreeRenderer {
         .add(binormal.clone().multiplyScalar(Math.sin(f.azimuth)))
         .normalize();
 
-      // Dense small scales → juniper pad mass (not large holly leaves)
-      const count = isTip ? 18 : 12;
-      const padR = 0.003 + Math.min(0.0035, Math.sqrt(f.area) * 0.25);
-      const tipGrowth = isTip || f.ageDays < 50;
+      // Small dense scales → continuous juniper pad mass
+      const layers = isTip ? 5 : 3;
+      const perLayer = isTip ? 18 : 14;
+      const count = layers * perLayer;
+      const padR = 0.0019 + Math.min(0.0032, Math.sqrt(f.area) * 0.26);
+      const tipGrowth = isTip || f.ageDays < 55;
 
       for (let s = 0; s < count; s++) {
-        const ang = f.azimuth + (s / count) * Math.PI * 2 + f.t * 1.7;
-        const layer = Math.floor(s / 6);
+        const layer = Math.floor(s / perLayer);
+        const inLayer = s % perLayer;
+        const ang =
+          f.azimuth +
+          (inLayer / perLayer) * Math.PI * 2 +
+          layer * 0.28 +
+          f.t * 1.3;
         const cos = Math.cos(ang);
         const sin = Math.sin(ang);
         const spin = new THREE.Vector3(
@@ -246,15 +322,20 @@ export class TreeRenderer {
           radial.z * cos + binormal.z * sin,
         ).normalize();
 
+        const radialOff = r + padR * (0.08 + layer * 0.18);
+        const alongOff =
+          (inLayer % 5) * padR * 0.09 - padR * 0.15 + layer * padR * 0.06;
+
         const pos = along
           .clone()
-          .addScaledVector(spin, r + padR * (0.15 + layer * 0.12))
-          .addScaledVector(dir, (s % 5) * padR * 0.12 - padR * 0.15);
+          .addScaledVector(spin, radialOff)
+          .addScaledVector(dir, alongOff);
 
+        // Scales hug the shoot — more radial, less leaf-like
         const face = spin
           .clone()
-          .multiplyScalar(0.8)
-          .addScaledVector(dir, 0.25)
+          .multiplyScalar(0.88)
+          .addScaledVector(dir, 0.18 + layer * 0.04)
           .normalize();
 
         const quat = new THREE.Quaternion().setFromUnitVectors(
@@ -264,26 +345,30 @@ export class TreeRenderer {
         quat.multiply(
           new THREE.Quaternion().setFromAxisAngle(
             new THREE.Vector3(0, 0, 1),
-            ang * 0.35 + layer * 0.5,
+            ang * 0.5 + layer * 0.4,
           ),
         );
 
         const sc =
-          padR * (0.95 + (s % 3) * 0.1) * (0.85 + 0.2 * f.efficiency);
+          padR *
+          (0.75 + (s % 4) * 0.06) *
+          (0.85 + 0.18 * f.efficiency) *
+          (1 - layer * 0.05);
         out.push({
           position: pos,
           quaternion: quat,
-          scale: new THREE.Vector3(sc, sc * 1.25, sc),
-          tip: tipGrowth,
+          scale: new THREE.Vector3(sc, sc * 1.15, sc),
+          tip: tipGrowth && layer < 2,
         });
       }
     }
 
-    // Apex spray
+    // Dense apex spray (conical tip of tiny scales)
     if (isTip) {
       const tip = new THREE.Vector3(...frame.tip);
-      for (let i = 0; i < 10; i++) {
-        const ang = (i / 10) * Math.PI * 2;
+      for (let i = 0; i < 28; i++) {
+        const ang = (i / 28) * Math.PI * 2 + 0.2;
+        const ring = Math.floor(i / 14);
         const spin2 = new THREE.Vector3(
           normal.x * Math.cos(ang) + binormal.x * Math.sin(ang),
           normal.y * Math.cos(ang) + binormal.y * Math.sin(ang),
@@ -291,19 +376,19 @@ export class TreeRenderer {
         ).normalize();
         const face = spin2
           .clone()
-          .multiplyScalar(0.5)
-          .addScaledVector(dir, 0.7)
+          .multiplyScalar(0.55 + ring * 0.08)
+          .addScaledVector(dir, 0.65 - ring * 0.08)
           .normalize();
         out.push({
           position: tip
             .clone()
-            .addScaledVector(dir, 0.0012)
-            .addScaledVector(spin2, r * 0.7 + 0.0008),
+            .addScaledVector(dir, 0.0006 + ring * 0.001)
+            .addScaledVector(spin2, r * 0.5 + 0.0004 + ring * 0.0006),
           quaternion: new THREE.Quaternion().setFromUnitVectors(
             new THREE.Vector3(0, 0, 1),
             face,
           ),
-          scale: new THREE.Vector3(0.0026, 0.0034, 0.0026),
+          scale: new THREE.Vector3(0.0015, 0.002, 0.0015),
           tip: true,
         });
       }
@@ -335,7 +420,7 @@ export class TreeRenderer {
   ): THREE.InstancedMesh {
     const mesh = new THREE.InstancedMesh(this.scaleGeo, mat, items.length);
     mesh.castShadow = true;
-    mesh.receiveShadow = false;
+    mesh.receiveShadow = true;
     mesh.frustumCulled = true;
     for (let i = 0; i < items.length; i++) {
       const s = items[i];
@@ -363,8 +448,8 @@ export class TreeRenderer {
     normal.crossVectors(binormal, dir).normalize();
 
     const turns = 4;
-    const segs = 32;
-    const amp = radius + 0.0015;
+    const segs = 40;
+    const amp = radius + 0.0014;
     for (let i = 0; i <= segs; i++) {
       const t = i / segs;
       const ang = t * turns * Math.PI * 2;
@@ -377,7 +462,7 @@ export class TreeRenderer {
       );
     }
     const curve = new THREE.CatmullRomCurve3(points);
-    const geo = new THREE.TubeGeometry(curve, segs, 0.00065, 5, false);
+    const geo = new THREE.TubeGeometry(curve, segs, 0.00055, 6, false);
     const mesh = new THREE.Mesh(geo, this.wireMat);
     mesh.castShadow = true;
     this.wireGroup.add(mesh);
@@ -394,18 +479,13 @@ export class TreeRenderer {
     while (g.children.length) {
       const c = g.children.pop()!;
       if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) {
-        if (c.geometry !== this.scaleGeo) {
+        if (c.geometry !== this.scaleGeo && c.geometry !== this._jointGeo) {
           c.geometry.dispose();
         }
         const mats = Array.isArray(c.material) ? c.material : [c.material];
         for (const m of mats) {
+          // Dispose only material instances we cloned (maps stay shared)
           if (!sharedMats.has(m) && c.userData.disposeMat) {
-            // Dispose cloned maps on bark segment materials
-            const std = m as THREE.MeshStandardMaterial;
-            std.map?.dispose();
-            // don't dispose shared source textures that were cloned — clone() of texture is separate
-            std.normalMap?.dispose();
-            std.roughnessMap?.dispose();
             m.dispose();
           }
         }
@@ -418,6 +498,7 @@ export class TreeRenderer {
     this.clearGroup(this.foliageGroup);
     this.clearGroup(this.wireGroup);
     this.scaleGeo.dispose();
+    this._jointGeo.dispose();
     this.barkMat.dispose();
     this.foliageMat.dispose();
     this.foliageTipMat.dispose();

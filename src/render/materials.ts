@@ -7,7 +7,10 @@ import {
   createGroundAlbedoTexture,
   createPedestalAlbedoTexture,
   createPotAlbedoTexture,
+  createPotNormalTexture,
+  createPotRoughnessTexture,
   createSoilAlbedoTexture,
+  createSoilNormalTexture,
 } from './textures';
 
 let barkAlbedo: THREE.CanvasTexture | null = null;
@@ -16,7 +19,10 @@ let barkRough: THREE.CanvasTexture | null = null;
 let foliageMature: THREE.CanvasTexture | null = null;
 let foliageTip: THREE.CanvasTexture | null = null;
 let soilAlbedo: THREE.CanvasTexture | null = null;
+let soilNormal: THREE.CanvasTexture | null = null;
 let potAlbedo: THREE.CanvasTexture | null = null;
+let potNormal: THREE.CanvasTexture | null = null;
+let potRough: THREE.CanvasTexture | null = null;
 let groundAlbedo: THREE.CanvasTexture | null = null;
 let pedestalAlbedo: THREE.CanvasTexture | null = null;
 
@@ -37,75 +43,72 @@ export function createBarkMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     map: barkAlbedo,
     normalMap: barkNormal,
-    normalScale: new THREE.Vector2(0.85, 0.85),
+    normalScale: new THREE.Vector2(1.35, 1.35),
     roughnessMap: barkRough,
-    roughness: 1,
+    roughness: 0.92,
     metalness: 0.02,
-    color: new THREE.Color('#c4a080'), // multiplies texture
+    color: new THREE.Color('#a88868'),
   });
 }
 
-/** Clone bark material with UV repeat scaled to segment proportions. */
+/**
+ * Lightweight bark variant — color/roughness only, shared maps.
+ * Avoids cloning textures per segment (was a major rebuild cost).
+ */
 export function barkMaterialForSegment(
   base: THREE.MeshStandardMaterial,
-  length: number,
+  _length: number,
   radius: number,
 ): THREE.MeshStandardMaterial {
   const mat = base.clone();
-  const circ = Math.max(0.01, 2 * Math.PI * radius);
-  const uRepeat = Math.max(0.8, circ / 0.025);
-  const vRepeat = Math.max(0.6, length / 0.02);
-  if (mat.map) {
-    mat.map = mat.map.clone();
-    mat.map.repeat.set(uRepeat, vRepeat);
-    mat.map.needsUpdate = true;
+  // Shared map references (do NOT clone textures)
+  mat.map = base.map;
+  mat.normalMap = base.normalMap;
+  mat.roughnessMap = base.roughnessMap;
+  // Thin shoots slightly smoother
+  if (radius < 0.0035) {
+    mat.roughness = 0.75;
   }
-  if (mat.normalMap) {
-    mat.normalMap = mat.normalMap.clone();
-    mat.normalMap.repeat.set(uRepeat, vRepeat);
-    mat.normalMap.needsUpdate = true;
-  }
-  if (mat.roughnessMap) {
-    mat.roughnessMap = mat.roughnessMap.clone();
-    mat.roughnessMap.repeat.set(uRepeat, vRepeat);
-    mat.roughnessMap.needsUpdate = true;
-  }
-  // Younger wood slightly greener / smoother
   return mat;
 }
 
-export function createFoliageMaterial(): THREE.MeshStandardMaterial {
+export function createFoliageMaterial(): THREE.MeshPhysicalMaterial {
   if (!foliageMature) {
-    foliageMature = createFoliageAlbedoTexture([45, 95, 48]);
+    foliageMature = createFoliageAlbedoTexture([38, 88, 42]);
   }
-  return new THREE.MeshStandardMaterial({
+  return new THREE.MeshPhysicalMaterial({
     map: foliageMature,
-    color: new THREE.Color('#7aab68'),
-    roughness: 0.82,
+    color: new THREE.Color('#5f9a52'),
+    roughness: 0.78,
     metalness: 0,
+    sheen: 0.35,
+    sheenRoughness: 0.55,
+    sheenColor: new THREE.Color('#8fbf6a'),
     side: THREE.DoubleSide,
     transparent: true,
-    alphaTest: 0.15,
+    alphaTest: 0.22,
     depthWrite: true,
-    // Avoid alpha sorting flicker on dense pads
     polygonOffset: true,
     polygonOffsetFactor: 1,
     polygonOffsetUnits: 1,
   });
 }
 
-export function createFoliageTipMaterial(): THREE.MeshStandardMaterial {
+export function createFoliageTipMaterial(): THREE.MeshPhysicalMaterial {
   if (!foliageTip) {
-    foliageTip = createFoliageAlbedoTexture([70, 130, 55]);
+    foliageTip = createFoliageAlbedoTexture([62, 120, 48]);
   }
-  return new THREE.MeshStandardMaterial({
+  return new THREE.MeshPhysicalMaterial({
     map: foliageTip,
-    color: new THREE.Color('#9ccc78'),
-    roughness: 0.75,
+    color: new THREE.Color('#7fb862'),
+    roughness: 0.7,
     metalness: 0,
+    sheen: 0.45,
+    sheenRoughness: 0.48,
+    sheenColor: new THREE.Color('#b0d878'),
     side: THREE.DoubleSide,
     transparent: true,
-    alphaTest: 0.15,
+    alphaTest: 0.22,
     depthWrite: true,
     polygonOffset: true,
     polygonOffsetFactor: 1,
@@ -113,35 +116,58 @@ export function createFoliageTipMaterial(): THREE.MeshStandardMaterial {
   });
 }
 
+/** Soft matte ceramic — no clearcoat (avoids blown white rim under IBL). */
 export function createPotMaterial(): THREE.MeshStandardMaterial {
   if (!potAlbedo) potAlbedo = createPotAlbedoTexture();
-  // Physical-leaning standard: responds better under IBL until ceramic PR
+  if (!potNormal) potNormal = createPotNormalTexture();
+  if (!potRough) potRough = createPotRoughnessTexture();
   return new THREE.MeshStandardMaterial({
     map: potAlbedo,
-    color: new THREE.Color('#c4a090'),
-    roughness: 0.48,
+    normalMap: potNormal,
+    normalScale: new THREE.Vector2(0.45, 0.45),
+    roughnessMap: potRough,
+    color: new THREE.Color('#a87860'),
+    roughness: 0.72,
     metalness: 0.04,
+    envMapIntensity: 0.4,
   });
 }
 
 export function createSoilMaterial(): THREE.MeshStandardMaterial {
   if (!soilAlbedo) {
     soilAlbedo = createSoilAlbedoTexture();
-    soilAlbedo.repeat.set(3, 3);
+    soilAlbedo.repeat.set(2.5, 2.5);
+  }
+  if (!soilNormal) {
+    soilNormal = createSoilNormalTexture();
+    soilNormal.repeat.set(2.5, 2.5);
   }
   return new THREE.MeshStandardMaterial({
     map: soilAlbedo,
-    color: new THREE.Color('#a89880'),
-    roughness: 0.98,
+    normalMap: soilNormal,
+    normalScale: new THREE.Vector2(1.1, 1.1),
+    color: new THREE.Color('#9a8a72'),
+    roughness: 0.97,
     metalness: 0,
   });
 }
 
-export function createWireMaterial(): THREE.MeshStandardMaterial {
+export function createGritMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#d4b45c'),
-    roughness: 0.35,
-    metalness: 0.65,
+    color: new THREE.Color('#8a7860'),
+    roughness: 0.92,
+    metalness: 0.02,
+  });
+}
+
+/** Dull aluminum / copper training wire. */
+export function createWireMaterial(): THREE.MeshPhysicalMaterial {
+  return new THREE.MeshPhysicalMaterial({
+    color: new THREE.Color('#b0a090'),
+    roughness: 0.48,
+    metalness: 0.82,
+    clearcoat: 0.08,
+    clearcoatRoughness: 0.5,
   });
 }
 
