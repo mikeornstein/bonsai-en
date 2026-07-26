@@ -39,11 +39,25 @@ npm run screenshots
 
 - Script: [`scripts/screenshot.mjs`](../scripts/screenshot.mjs)  
 - Output: `screenshots/*.png` (gitignored via `screenshots/*.png`)  
-- Captures: desktop, mobile, post time-acceleration, orbit view  
+- Captures:
+  - `01-desktop` / `02-mobile` / `03-after-growth` / `04-orbit` — product baselines (UI on)
+  - `05-ortho-front` / `06-ortho-right` / `07-ortho-top` — orthographic geometry audits (UI hidden)
+  - `08-ortho-top-close` / `09-ortho-front-low` — close-up pot/soil leak checks
+- Harness API (set by `src/main.ts`): `window.__bonsai.setView('front'|'right'|'top'|…)`, `setUiVisible(false)`, `setPhysicsFrozen(true)`, `getPhysicsTelemetry()`
 - Clears localStorage and forces **New** sapling for consistent baselines  
 - Headless Chrome flags include SwiftShader/WebGL so Three.js can render without a GPU desktop  
+- Ortho audit views freeze tree physics so goldens stay stable  
 
-**Agent workflow:** write PNGs → open/read images with vision → fix issues → re-run screenshots.
+**Physics stability (optional):**
+
+```bash
+npm run dev
+node scripts/physics-stability.mjs   # sequential frames + maxOmega telemetry
+```
+
+At rest, `window.__bonsai.getPhysicsTelemetry().maxOmega` should go to ~0.
+
+**Agent workflow:** write PNGs → open/read images with vision (especially ortho top for soil seal) → fix issues → re-run screenshots.
 
 ### Useful local debugging
 

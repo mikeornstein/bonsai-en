@@ -421,21 +421,21 @@ export function createPotNormalTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Light product-studio cyclorama — warm linen sky falling to cool stone floor.
- * Used as scene.background (equirect-ish vertical gradient via low-res map).
+ * Soft zen-tinted cyclorama — cool overcast sky into warm stone floor.
+ * Visible background only; IBL comes from the zen-garden equirect.
  */
 export function createStudioBackgroundTexture(): THREE.CanvasTexture {
   return canvasTexture(
     8,
     (ctx, size) => {
       const g = ctx.createLinearGradient(0, 0, 0, size);
-      // Top: soft cool daylight
-      g.addColorStop(0, '#eef1f4');
-      // Mid: warm linen / paper
-      g.addColorStop(0.42, '#e6e1d8');
-      // Lower: soft stone gray
-      g.addColorStop(0.78, '#d4cfc6');
-      g.addColorStop(1, '#c4bfb6');
+      // Top: soft cool overcast (matches zen HDRI sky)
+      g.addColorStop(0, '#e8edf0');
+      // Mid: warm linen / paper with a hint of garden green
+      g.addColorStop(0.4, '#e2e0d6');
+      // Lower: soft stone / gravel
+      g.addColorStop(0.76, '#cfc8bc');
+      g.addColorStop(1, '#bfb6aa');
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, size, size);
     },
@@ -444,10 +444,12 @@ export function createStudioBackgroundTexture(): THREE.CanvasTexture {
 }
 
 /**
- * Soft studio equirect for PMREM IBL — bright key, cool fill, warm floor bounce.
+ * Zen-garden equirect for PMREM IBL — soft daylight, greenery, gravel, water.
+ * Muted and low-contrast so reflections feel real without competing with the tree.
  * Low-res by design; fromEquirectangular is far cheaper than RoomEnvironment.
  */
-export function createStudioEnvEquirectTexture(): THREE.CanvasTexture {
+export function createZenGardenEnvEquirectTexture(): THREE.CanvasTexture {
+  // 256 is enough for soft IBL and much cheaper on SwiftShader PMREM
   return canvasTexture(
     256,
     (ctx, size) => {
@@ -455,29 +457,81 @@ export function createStudioEnvEquirectTexture(): THREE.CanvasTexture {
       const d = img.data;
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-          const v = y / size; // 0 top = +Y
+          const elev = y / size; // 0 top = +Y
           const u = x / size;
-          // Soft key light in upper-right of environment
-          const lx = (u - 0.62) * 2.2;
-          const ly = (v - 0.22) * 2.4;
-          const key = Math.exp(-(lx * lx + ly * ly) * 2.8);
-          // Cool zenith, warm floor
-          let r = 210 + (1 - v) * 30;
-          let g = 208 + (1 - v) * 28;
-          let b = 205 + (1 - v) * 35;
-          r = r * (0.55 + v * 0.2) + key * 180;
-          g = g * (0.55 + v * 0.2) + key * 165;
-          b = b * (0.55 + v * 0.2) + key * 140;
-          // Soft fill on opposite side
+
+          // --- Soft overcast sky (cool zenith → warmer haze) ---
+          let r = 196 + elev * 22;
+          let g = 204 + elev * 12;
+          let b = 214 - elev * 8;
+
+          // Soft sun disk (warm key) upper-right — ceramic highlights
+          const lx = (u - 0.68) * 2.4;
+          const ly = (elev - 0.18) * 2.8;
+          const key = Math.exp(-(lx * lx + ly * ly) * 3.2);
+          r += key * 95;
+          g += key * 78;
+          b += key * 48;
+
+          // Cool fill opposite sun
           const fill =
-            Math.exp(-(((u - 0.15) * 3) ** 2) - (((v - 0.4) * 2) ** 2)) * 40;
-          r += fill * 0.7;
-          g += fill * 0.85;
-          b += fill;
+            Math.exp(-(((u - 0.18) * 2.6) ** 2) - (((elev - 0.32) * 2.1) ** 2)) *
+            28;
+          r += fill * 0.55;
+          g += fill * 0.75;
+          b += fill * 1.05;
+
+          // --- Horizon: soft bamboo / garden greenery ---
+          const foliageBand =
+            smoothstep(0.4, 0.48, elev) * smoothstep(0.62, 0.52, elev);
+          const bamboo = Math.pow(
+            Math.abs(Math.sin(u * Math.PI * 14 + Math.sin(u * 9) * 0.4)),
+            8,
+          );
+          // Cheap 2-octave noise (avoid full fbm every pixel)
+          const canopy = smoothNoise(u * 6, elev * 10) * 0.65 +
+            smoothNoise(u * 12, elev * 20) * 0.35;
+          const greenMix = foliageBand * (0.35 + canopy * 0.55 + bamboo * 0.25);
+          r = r * (1 - greenMix * 0.55) + (72 + canopy * 40) * greenMix;
+          g = g * (1 - greenMix * 0.4) + (98 + canopy * 36) * greenMix;
+          b = b * (1 - greenMix * 0.65) + (58 + canopy * 22) * greenMix;
+
+          // Soft stone wall under greenery
+          const wall =
+            smoothstep(0.52, 0.58, elev) * smoothstep(0.68, 0.6, elev);
+          const stone = smoothNoise(u * 10, elev * 4);
+          r = r * (1 - wall * 0.5) + (150 + stone * 28) * wall;
+          g = g * (1 - wall * 0.5) + (142 + stone * 24) * wall;
+          b = b * (1 - wall * 0.5) + (128 + stone * 18) * wall;
+
+          // Quiet water ring (cool dark, for glaze reflections)
+          const water =
+            smoothstep(0.56, 0.62, elev) * smoothstep(0.72, 0.66, elev);
+          const ripple = smoothNoise(u * 18, elev * 8);
+          r = r * (1 - water * 0.55) + (88 + ripple * 18) * water;
+          g = g * (1 - water * 0.55) + (102 + ripple * 16) * water;
+          b = b * (1 - water * 0.45) + (108 + ripple * 20) * water;
+
+          // Raked gravel floor (bottom hemisphere)
+          const ground = smoothstep(0.62, 0.78, elev);
+          const gravel = smoothNoise(u * 14, elev * 18);
+          const rake = Math.sin((elev - 0.7) * 90 + gravel * 2.5) * 0.5 + 0.5;
+          const gr = 168 + gravel * 36 + rake * 10;
+          const gg = 156 + gravel * 28 + rake * 8;
+          const gb = 132 + gravel * 20 + rake * 6;
+          r = r * (1 - ground) + gr * ground;
+          g = g * (1 - ground) + gg * ground;
+          b = b * (1 - ground) + gb * ground;
+
+          // Mute so IBL stays gentle — bonsai remains the hero
+          r *= 0.88;
+          g *= 0.88;
+          b *= 0.88;
+
           const i = (y * size + x) * 4;
-          d[i] = Math.min(255, r);
-          d[i + 1] = Math.min(255, g);
-          d[i + 2] = Math.min(255, b);
+          d[i] = Math.min(255, Math.max(0, r));
+          d[i + 1] = Math.min(255, Math.max(0, g));
+          d[i + 2] = Math.min(255, Math.max(0, b));
           d[i + 3] = 255;
         }
       }
@@ -488,6 +542,17 @@ export function createStudioEnvEquirectTexture(): THREE.CanvasTexture {
       colorSpace: THREE.SRGBColorSpace,
     },
   );
+}
+
+/** Hermite smoothstep for procedural env bands. */
+function smoothstep(edge0: number, edge1: number, x: number): number {
+  const t = Math.min(1, Math.max(0, (x - edge0) / (edge1 - edge0)));
+  return t * t * (3 - 2 * t);
+}
+
+/** @deprecated Prefer createZenGardenEnvEquirectTexture */
+export function createStudioEnvEquirectTexture(): THREE.CanvasTexture {
+  return createZenGardenEnvEquirectTexture();
 }
 
 /** Subtle seamless floor texture — warm concrete / linen grain. */

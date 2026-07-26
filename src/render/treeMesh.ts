@@ -41,6 +41,14 @@ function createScaleGeometry(): THREE.BufferGeometry {
   return geo;
 }
 
+interface SegmentPoseHandles {
+  segment: THREE.Mesh;
+  jointBase: THREE.Mesh;
+  jointTip: THREE.Mesh | null;
+  r0: number;
+  r1: number;
+}
+
 export class TreeRenderer {
   readonly group = new THREE.Group();
   /** Lazily created so scene boot isn't blocked by procedural textures. */
@@ -58,6 +66,12 @@ export class TreeRenderer {
   private radialSegments = 14;
   private readonly _dummy = new THREE.Object3D();
   private readonly _jointGeo = new THREE.SphereGeometry(1, 12, 10);
+  /** Branch mesh handles for per-frame physics pose streaming. */
+  private poseHandles = new Map<NodeId, SegmentPoseHandles>();
+  /** Last tree used for foliage re-pose (structural rebuild only). */
+  private poseTree: TreeState | null = null;
+  private matureFoliage: THREE.InstancedMesh | null = null;
+  private tipFoliage: THREE.InstancedMesh | null = null;
 
   readonly pickables: THREE.Object3D[] = [];
 
@@ -79,26 +93,31 @@ export class TreeRenderer {
     this.selectedId = id;
   }
 
-  rebuild(tree: TreeState): void {
+  rebuild(tree: TreeState, frames?: Map<NodeId, NodeWorld>): void {
     this.ensureMaterials();
     this.clearGroup(this.branchGroup);
     this.clearGroup(this.foliageGroup);
     this.clearGroup(this.wireGroup);
     this.pickables.length = 0;
+    this.poseHandles.clear();
+    this.matureFoliage = null;
+    this.tipFoliage = null;
+    this.poseTree = tree;
     if (this.highlightMesh) {
       this.group.remove(this.highlightMesh);
       this.highlightMesh.geometry.dispose();
       this.highlightMesh = null;
     }
 
-    const frames = computeWorldFrames(tree);
-    this.group.position.set(0, POT_SOIL_LOCAL_Y, 0);
+    const live = frames ?? computeWorldFrames(tree);
+    // Slightly bury the root so the trunk emerges from soil rather than floating on a disc
+    this.group.position.set(0, POT_SOIL_LOCAL_Y - 0.0025, 0);
 
     const scales: ScaleInstance[] = [];
 
     for (const node of Object.values(tree.nodes)) {
       if (!node.living) continue;
-      const frame = frames.get(node.id);
+      const frame = live.get(node.id);
       if (!frame || node.length < 1e-6) continue;
 
       this.addBranchSegment(node.id, node, frame, tree);
@@ -125,9 +144,9 @@ export class TreeRenderer {
 
     this.buildInstancedFoliage(scales);
 
-    if (this.selectedId && frames.has(this.selectedId)) {
+    if (this.selectedId && live.has(this.selectedId)) {
       const node = tree.nodes[this.selectedId];
-      const frame = frames.get(this.selectedId)!;
+      const frame = live.get(this.selectedId)!;
       if (node) {
         const r = Math.max(node.radius, MIN_VISUAL_RADIUS) * 1.35;
         this.highlightMesh = this.makeTaperedSegment(
@@ -142,6 +161,55 @@ export class TreeRenderer {
     }
   }
 
+  /**
+   * Stream live physics pose onto existing meshes without a full rebuild.
+   * Foliage instance matrices are regenerated from the live frames.
+   */
+  applyPose(tree: TreeState, frames: Map<NodeId, NodeWorld>): void {
+    for (const [id, handles] of this.poseHandles) {
+      const frame = frames.get(id);
+      if (!frame) continue;
+      this.placeSegment(handles.segment, frame);
+      handles.jointBase.position.set(...frame.base);
+      if (handles.jointTip) {
+        handles.jointTip.position.set(...frame.tip);
+      }
+    }
+
+    if (this.highlightMesh && this.selectedId) {
+      const frame = frames.get(this.selectedId);
+      if (frame) this.placeSegment(this.highlightMesh, frame);
+    }
+
+    // Foliage follows host segments (rigid attachment in phase 1)
+    if (this.poseTree === tree && (this.matureFoliage || this.tipFoliage)) {
+      const scales: ScaleInstance[] = [];
+      for (const node of Object.values(tree.nodes)) {
+        if (!node.living) continue;
+        const frame = frames.get(node.id);
+        if (!frame || node.length < 1e-6) continue;
+        this.collectScales(node, frame, tree, scales);
+      }
+      if (scales.length > MAX_SCALE_INSTANCES) {
+        const tips = scales.filter((s) => s.tip);
+        const mature = scales.filter((s) => !s.tip);
+        const budget = Math.max(0, MAX_SCALE_INSTANCES - tips.length);
+        const step = Math.max(1, Math.ceil(mature.length / Math.max(1, budget)));
+        const kept: ScaleInstance[] = [...tips];
+        for (
+          let i = 0;
+          i < mature.length && kept.length < MAX_SCALE_INSTANCES;
+          i += step
+        ) {
+          kept.push(mature[i]);
+        }
+        scales.length = 0;
+        scales.push(...kept);
+      }
+      this.writeFoliageInstances(scales);
+    }
+  }
+
   private visualRadius(r: number): number {
     return Math.max(r, MIN_VISUAL_RADIUS);
   }
@@ -153,9 +221,9 @@ export class TreeRenderer {
     tree: TreeState,
   ): void {
     let r0 = this.visualRadius(node.radius);
-    // Nebari flare on root internode
+    // Nebari flare on root internode — stronger base so the trunk seats in soil
     if (node.parentId === null) {
-      r0 *= 1.55;
+      r0 *= 1.85;
     }
     let r1 = r0 * 0.82;
     if (node.children.length) {
@@ -204,8 +272,9 @@ export class TreeRenderer {
     this.branchGroup.add(joint);
 
     // Tip joint when branching (collar into children)
+    let tipJoint: THREE.Mesh | null = null;
     if (node.children.length > 0) {
-      const tipJoint = new THREE.Mesh(this._jointGeo, mat);
+      tipJoint = new THREE.Mesh(this._jointGeo, mat);
       tipJoint.position.set(...frame.tip);
       tipJoint.scale.set(r1 * 1.05, r1 * 0.9, r1 * 1.05);
       tipJoint.castShadow = true;
@@ -213,6 +282,14 @@ export class TreeRenderer {
       tipJoint.userData.nodeId = id;
       this.branchGroup.add(tipJoint);
     }
+
+    this.poseHandles.set(id, {
+      segment: mesh,
+      jointBase: joint,
+      jointTip: tipJoint,
+      r0,
+      r1,
+    });
   }
 
   private makeTaperedSegment(
@@ -257,12 +334,12 @@ export class TreeRenderer {
     out: ScaleInstance[],
   ): void {
     const isTip = node.children.length === 0;
-    // Bare structural trunk — keep lower thick wood clean
-    if (node.radius >= 0.0075 && !isTip && node.children.length > 1) return;
-    // Only foliage-bearing / thin shoots
-    if (!isTip && node.radius >= 0.006 && node.foliage.every((f) => !f.living)) {
-      return;
-    }
+    // Bare structural wood — trunk / leaders show bark only
+    if (node.parentId === null) return;
+    if (!isTip && node.radius >= 0.0038) return;
+    if (!isTip && node.lignification > 0.55) return;
+    // Non-tips only if they still carry living foliage pads
+    if (!isTip && node.foliage.every((f) => !f.living)) return;
 
     const base = new THREE.Vector3(...frame.base);
     const dir = new THREE.Vector3(...frame.dir).normalize();
@@ -276,13 +353,13 @@ export class TreeRenderer {
     const binormal = new THREE.Vector3().crossVectors(dir, sideRef).normalize();
     const normal = new THREE.Vector3().crossVectors(binormal, dir).normalize();
 
-    // Continuous sleeve: rings along full internode for thin wood
+    // Dense pad mass on tips; lighter wrap on thin green shoots only
     const rings = isTip
-      ? Math.max(8, Math.floor(len / 0.0022))
-      : Math.max(5, Math.floor(len / 0.003));
-    const perRing = isTip ? 11 : 9;
-    const layers = isTip ? 3 : 2;
-    const scaleBase = isTip ? 0.0024 : 0.002;
+      ? Math.max(10, Math.floor(len / 0.0018))
+      : Math.max(4, Math.floor(len / 0.0032));
+    const perRing = isTip ? 13 : 8;
+    const layers = isTip ? 4 : 2;
+    const scaleBase = isTip ? 0.0026 : 0.0019;
     const tipGrowth = isTip || node.lignification < 0.35;
 
     for (let ring = 0; ring < rings; ring++) {
@@ -381,15 +458,42 @@ export class TreeRenderer {
       (s.tip ? tips : mature).push(s);
     }
     if (mature.length) {
-      this.foliageGroup.add(
-        this.makeInstancedScales(mature, this.foliageMat!),
-      );
+      this.matureFoliage = this.makeInstancedScales(mature, this.foliageMat!);
+      this.foliageGroup.add(this.matureFoliage);
     }
     if (tips.length) {
-      this.foliageGroup.add(
-        this.makeInstancedScales(tips, this.foliageTipMat!),
-      );
+      this.tipFoliage = this.makeInstancedScales(tips, this.foliageTipMat!);
+      this.foliageGroup.add(this.tipFoliage);
     }
+  }
+
+  private writeFoliageInstances(scales: ScaleInstance[]): void {
+    const mature: ScaleInstance[] = [];
+    const tips: ScaleInstance[] = [];
+    for (const s of scales) {
+      (s.tip ? tips : mature).push(s);
+    }
+    if (this.matureFoliage && mature.length === this.matureFoliage.count) {
+      this.fillInstanceMatrices(this.matureFoliage, mature);
+    }
+    if (this.tipFoliage && tips.length === this.tipFoliage.count) {
+      this.fillInstanceMatrices(this.tipFoliage, tips);
+    }
+  }
+
+  private fillInstanceMatrices(
+    mesh: THREE.InstancedMesh,
+    items: ScaleInstance[],
+  ): void {
+    for (let i = 0; i < items.length; i++) {
+      const s = items[i];
+      this._dummy.position.copy(s.position);
+      this._dummy.quaternion.copy(s.quaternion);
+      this._dummy.scale.copy(s.scale);
+      this._dummy.updateMatrix();
+      mesh.setMatrixAt(i, this._dummy.matrix);
+    }
+    mesh.instanceMatrix.needsUpdate = true;
   }
 
   private makeInstancedScales(
@@ -400,15 +504,7 @@ export class TreeRenderer {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = true;
-    for (let i = 0; i < items.length; i++) {
-      const s = items[i];
-      this._dummy.position.copy(s.position);
-      this._dummy.quaternion.copy(s.quaternion);
-      this._dummy.scale.copy(s.scale);
-      this._dummy.updateMatrix();
-      mesh.setMatrixAt(i, this._dummy.matrix);
-    }
-    mesh.instanceMatrix.needsUpdate = true;
+    this.fillInstanceMatrices(mesh, items);
     return mesh;
   }
 

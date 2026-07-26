@@ -9,3 +9,4 @@ coverage
 *.log
 .vite
 screenshots/*.png
+screenshots/*.json

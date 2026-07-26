@@ -43,11 +43,12 @@ export function createBarkMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     map: barkAlbedo,
     normalMap: barkNormal,
-    normalScale: new THREE.Vector2(1.35, 1.35),
+    normalScale: new THREE.Vector2(1.2, 1.2),
     roughnessMap: barkRough,
-    roughness: 0.92,
-    metalness: 0.02,
-    color: new THREE.Color('#a88868'),
+    roughness: 0.94,
+    metalness: 0.01,
+    color: new THREE.Color('#8a6e52'),
+    envMapIntensity: 0.22,
   });
 }
 
@@ -78,15 +79,16 @@ export function createFoliageMaterial(): THREE.MeshPhysicalMaterial {
   }
   return new THREE.MeshPhysicalMaterial({
     map: foliageMature,
-    color: new THREE.Color('#4a7a42'),
-    roughness: 0.8,
+    color: new THREE.Color('#3f6e38'),
+    roughness: 0.86,
     metalness: 0,
-    sheen: 0.28,
-    sheenRoughness: 0.6,
-    sheenColor: new THREE.Color('#7aaa5a'),
+    sheen: 0.18,
+    sheenRoughness: 0.72,
+    sheenColor: new THREE.Color('#6a9850'),
     side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 0.28,
+    // Cutout only — avoid transparent sorting glow that reads as plastic wrap
+    transparent: false,
+    alphaTest: 0.42,
     depthWrite: true,
     polygonOffset: true,
     polygonOffsetFactor: 1,
@@ -100,15 +102,15 @@ export function createFoliageTipMaterial(): THREE.MeshPhysicalMaterial {
   }
   return new THREE.MeshPhysicalMaterial({
     map: foliageTip,
-    color: new THREE.Color('#6a9e52'),
-    roughness: 0.72,
+    color: new THREE.Color('#5a8e48'),
+    roughness: 0.78,
     metalness: 0,
-    sheen: 0.38,
-    sheenRoughness: 0.5,
-    sheenColor: new THREE.Color('#9ccc68'),
+    sheen: 0.28,
+    sheenRoughness: 0.58,
+    sheenColor: new THREE.Color('#8cbb5e'),
     side: THREE.DoubleSide,
-    transparent: true,
-    alphaTest: 0.28,
+    transparent: false,
+    alphaTest: 0.4,
     depthWrite: true,
     polygonOffset: true,
     polygonOffsetFactor: 1,
@@ -116,7 +118,7 @@ export function createFoliageTipMaterial(): THREE.MeshPhysicalMaterial {
   });
 }
 
-/** Soft matte ceramic — no clearcoat (avoids blown white rim under IBL). */
+/** Soft matte ceramic — low clearcoat so zen-garden IBL reads as soft glaze. */
 export function createPotMaterial(): THREE.MeshStandardMaterial {
   if (!potAlbedo) potAlbedo = createPotAlbedoTexture();
   if (!potNormal) potNormal = createPotNormalTexture();
@@ -127,9 +129,21 @@ export function createPotMaterial(): THREE.MeshStandardMaterial {
     normalScale: new THREE.Vector2(0.45, 0.45),
     roughnessMap: potRough,
     color: new THREE.Color('#a87860'),
-    roughness: 0.72,
-    metalness: 0.04,
-    envMapIntensity: 0.4,
+    roughness: 0.68,
+    metalness: 0.05,
+    envMapIntensity: 0.55,
+    side: THREE.FrontSide,
+  });
+}
+
+/** Unglazed interior clay — darker, matte, low IBL response. */
+export function createPotInnerMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#4a342c'),
+    roughness: 0.94,
+    metalness: 0,
+    envMapIntensity: 0.12,
+    side: THREE.DoubleSide,
   });
 }
 
@@ -146,9 +160,10 @@ export function createSoilMaterial(): THREE.MeshStandardMaterial {
     map: soilAlbedo,
     normalMap: soilNormal,
     normalScale: new THREE.Vector2(1.1, 1.1),
-    color: new THREE.Color('#9a8a72'),
-    roughness: 0.97,
+    color: new THREE.Color('#8a7a62'),
+    roughness: 0.98,
     metalness: 0,
+    envMapIntensity: 0.15,
   });
 }
 
@@ -160,14 +175,15 @@ export function createGritMaterial(): THREE.MeshStandardMaterial {
   });
 }
 
-/** Dull aluminum / copper training wire. */
+/** Dull aluminum / copper training wire — higher env response for garden IBL. */
 export function createWireMaterial(): THREE.MeshPhysicalMaterial {
   return new THREE.MeshPhysicalMaterial({
     color: new THREE.Color('#b0a090'),
-    roughness: 0.48,
-    metalness: 0.82,
+    roughness: 0.45,
+    metalness: 0.84,
     clearcoat: 0.08,
     clearcoatRoughness: 0.5,
+    envMapIntensity: 0.85,
   });
 }
 
@@ -205,5 +221,6 @@ export function createPedestalMaterial(): THREE.MeshStandardMaterial {
     color: new THREE.Color('#d0cbc2'),
     roughness: 0.78,
     metalness: 0.02,
+    envMapIntensity: 0.28,
   });
 }

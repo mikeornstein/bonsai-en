@@ -104,6 +104,8 @@ npm run screenshots  # → screenshots/*.png (gitignored)
 
 Then **read the PNGs** with the image-capable file reader and iterate. Script: `scripts/screenshot.mjs`.
 
+Orthographic audits (`05`–`09`) hide the HUD and use `window.__bonsai.setView(...)` for front/right/top (and close-ups). Prefer top + front-low when checking pot/soil watertightness.
+
 ## Git hygiene
 
 - **Do not commit** `screenshots/*.png`, `node_modules/`, or `dist/`.  
@@ -196,7 +198,28 @@ gh workflow run deploy.yml
 
 ### Known realism gap
 
-Current look is **improved stylized**, not photoreal. Future work: better bark/foliage assets, denser scale pads, soil/lighting, LOD. Always screenshot after visual PRs.
+Pot/soil are **physically closed** (thick lathe + volumetric soil). IBL uses a procedural **zen-garden HDRI** (PMREM) for ceramic/wire reflections; visible background stays a soft cyclorama so the garden does not compete with the tree. Product post (real GPUs): subtle **bokeh DOF** focused on the orbit target + vignette/contrast grade. Soft GL / SwiftShader skips the post stack. Tree foliage is still **improved stylized** (instanced scale pads), not photoreal juniper. Future work: denser foliage assets, better bark, LOD. Always re-run `npm run screenshots` (including ortho views) after visual PRs.
+
+### Runtime tree physics
+
+Live elastic dynamics live in `src/sim/physics/` (pure TS, no Three.js):
+
+- Each internode has **mass / stiffness / damping**; gravity sags the canopy.
+- **Prune** removes distal mass → parent chain **springs up**.
+- **Camera orbit** injects inertial forces (jiggle).
+- **Collisions** prevent interpenetration (capsule–capsule, soil, pot — sibling/endpoint pairs filtered).
+- Joints **sleep** when quiet so a stationary camera does not buzz.
+- Physics state is **session-only** (not in `TreeState` saves). Freeze for screenshots via `window.__bonsai.setPhysicsFrozen(true)` / ortho `setView`.
+
+**Telemetry** (quantitative settle checks):
+
+```js
+window.__bonsai.getPhysicsTelemetry()
+// { maxOmega, rmsOmega, maxTheta, kineticEnergy, freeJoints, sleeping, contacts, simTime }
+```
+
+At rest (no orbit), `maxOmega` and `kineticEnergy` should go to ~0 and `sleeping === freeJoints`.  
+Script: `BONSAI_URL=http://localhost:5173/ node scripts/physics-stability.mjs` → `screenshots/physics-seq-*.png` + `physics-telemetry.json`.
 
 ## Architecture reminders
 

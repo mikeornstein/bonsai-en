@@ -76,4 +76,20 @@ export interface SpeciesDefinition {
   saplingStemNodes: number;
   /** Initial laterals. */
   saplingLaterals: number;
+
+  /**
+   * Structural dynamics (mass / stiffness / damping).
+   * Used by `src/sim/physics` — not serialized on TreeState.
+   */
+  physics: {
+    woodDensity: number;
+    youngModulusGreen: number;
+    youngModulusLignified: number;
+    dampingRatio: number;
+    foliageMassScale: number;
+    maxDeflectionRad: number;
+    gravity: number;
+    cameraForceGain: number;
+    wireStiffnessMult: number;
+  };
 }

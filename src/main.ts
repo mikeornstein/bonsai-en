@@ -1,4 +1,5 @@
 import { Game } from './app/game';
+import type { CameraViewName } from './render/scene';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 if (!canvas) {
@@ -19,8 +20,56 @@ function showBootError(err: unknown): void {
   }
 }
 
+/** Screenshot / geometry-audit harness used by scripts/screenshot.mjs */
+export interface BonsaiHarness {
+  setView(view: CameraViewName): void;
+  getView(): CameraViewName;
+  setUiVisible(visible: boolean): void;
+  setPhysicsFrozen(frozen: boolean): void;
+  newSapling(): void;
+  getPhysicsTelemetry(): {
+    maxOmega: number;
+    rmsOmega: number;
+    maxTheta: number;
+    kineticEnergy: number;
+    freeJoints: number;
+    sleeping: number;
+    contacts: number;
+    simTime: number;
+  };
+}
+
+declare global {
+  interface Window {
+    __bonsai?: BonsaiHarness;
+  }
+}
+
 try {
   const game = new Game(canvas);
+
+  window.__bonsai = {
+    setView(view: CameraViewName) {
+      // Ortho audits freeze dynamics for stable geometry screenshots
+      game.setPhysicsFrozen(view !== 'default');
+      game.scene.setView(view);
+    },
+    getView() {
+      return game.scene.getView();
+    },
+    setUiVisible(visible: boolean) {
+      document.body.classList.toggle('screenshot-hide-ui', !visible);
+    },
+    setPhysicsFrozen(frozen: boolean) {
+      game.setPhysicsFrozen(frozen);
+    },
+    newSapling() {
+      game.newSapling();
+    },
+    getPhysicsTelemetry() {
+      return game.getPhysicsTelemetry();
+    },
+  };
 
   let last = performance.now();
   function frame(now: number): void {
