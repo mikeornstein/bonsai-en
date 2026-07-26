@@ -130,24 +130,25 @@ export class TreeRenderer {
 
   private applySeasonFoliageTint(): void {
     if (!this.foliageMat || !this.foliageTipMat) return;
-    // Mature pad color stays evergreen; tips shift with flush
+    // Mature pad stays evergreen midtones; tips shift with flush.
+    // Cool seasons are relatively darker, not black felt (#42 value pass).
     switch (this.season) {
       case 'earlyFlush':
       case 'mainFlush':
-        this.foliageTipMat.color.set('#6a9e4e');
-        this.foliageTipMat.sheenColor?.set('#9ccc68');
-        this.foliageMat.color.set('#3f6e38');
+        this.foliageTipMat.color.set('#72a856');
+        this.foliageTipMat.sheenColor?.set('#a8d46e');
+        this.foliageMat.color.set('#4f8248');
         break;
       case 'hardening':
-        this.foliageTipMat.color.set('#4a7a42');
-        this.foliageTipMat.sheenColor?.set('#6a9850');
-        this.foliageMat.color.set('#3a6634');
+        this.foliageTipMat.color.set('#5a8a4a');
+        this.foliageTipMat.sheenColor?.set('#7aaa58');
+        this.foliageMat.color.set('#467840');
         break;
       case 'rest':
       case 'dormant':
-        this.foliageTipMat.color.set('#3f6a3a');
-        this.foliageTipMat.sheenColor?.set('#5a7e48');
-        this.foliageMat.color.set('#385e34');
+        this.foliageTipMat.color.set('#4e7a46');
+        this.foliageTipMat.sheenColor?.set('#6a9052');
+        this.foliageMat.color.set('#426e3c');
         break;
     }
   }
