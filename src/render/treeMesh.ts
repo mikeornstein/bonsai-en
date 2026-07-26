@@ -14,7 +14,7 @@ import { POT_SOIL_LOCAL_Y } from './pot';
 const UP = new THREE.Vector3(0, 1, 0);
 const MIN_VISUAL_RADIUS = 0.0016;
 /** Soft cap so large trees stay interactive on mobile / headless. */
-const MAX_SCALE_INSTANCES = 9000;
+const MAX_SCALE_INSTANCES = 16000;
 
 interface ScaleInstance {
   position: THREE.Vector3;
@@ -236,7 +236,8 @@ export class TreeRenderer {
   }
 
   /**
-   * Dense multi-layer juniper scale pads on outer wood.
+   * Continuous juniper scale sleeves + tip pads (not sparse leaf clusters).
+   * Helical rings wrap the shoot so foliage reads as solid green volume.
    */
   private collectScales(
     node: Internode,
@@ -246,38 +247,11 @@ export class TreeRenderer {
   ): void {
     const isTip = node.children.length === 0;
     // Bare structural trunk — keep lower thick wood clean
-    if (node.radius >= 0.007 && !isTip && node.children.length > 1) return;
-
-    const living = node.foliage.filter((f) => f.living);
-    // Synthetic pad if sim has no foliage clusters on thin shoots
-    const sites =
-      living.length > 0
-        ? living.map((f) => ({
-            t: f.t,
-            azimuth: f.azimuth,
-            area: f.area,
-            ageDays: f.ageDays,
-            efficiency: f.efficiency,
-          }))
-        : isTip || node.radius < 0.005
-          ? [
-              { t: 0.45, azimuth: 0.2, area: 0.00045, ageDays: 40, efficiency: 1 },
-              { t: 0.7, azimuth: 1.4, area: 0.0004, ageDays: 18, efficiency: 1 },
-              { t: 0.92, azimuth: 2.6, area: 0.00038, ageDays: 6, efficiency: 1 },
-            ]
-          : node.radius < 0.0065
-            ? [
-                {
-                  t: 0.75,
-                  azimuth: 0.8,
-                  area: 0.0003,
-                  ageDays: 30,
-                  efficiency: 0.9,
-                },
-              ]
-            : [];
-
-    if (!sites.length) return;
+    if (node.radius >= 0.0075 && !isTip && node.children.length > 1) return;
+    // Only foliage-bearing / thin shoots
+    if (!isTip && node.radius >= 0.006 && node.foliage.every((f) => !f.living)) {
+      return;
+    }
 
     const base = new THREE.Vector3(...frame.base);
     const dir = new THREE.Vector3(...frame.dir).normalize();
@@ -291,84 +265,76 @@ export class TreeRenderer {
     const binormal = new THREE.Vector3().crossVectors(dir, sideRef).normalize();
     const normal = new THREE.Vector3().crossVectors(binormal, dir).normalize();
 
-    for (const f of sites) {
-      const along = base.clone().addScaledVector(dir, f.t * len);
-      const radial = normal
-        .clone()
-        .multiplyScalar(Math.cos(f.azimuth))
-        .add(binormal.clone().multiplyScalar(Math.sin(f.azimuth)))
-        .normalize();
+    // Continuous sleeve: rings along full internode for thin wood
+    const rings = isTip
+      ? Math.max(8, Math.floor(len / 0.0022))
+      : Math.max(5, Math.floor(len / 0.003));
+    const perRing = isTip ? 11 : 9;
+    const layers = isTip ? 3 : 2;
+    const scaleBase = isTip ? 0.0024 : 0.002;
+    const tipGrowth = isTip || node.lignification < 0.35;
 
-      // Small dense scales → continuous juniper pad mass
-      const layers = isTip ? 5 : 3;
-      const perLayer = isTip ? 18 : 14;
-      const count = layers * perLayer;
-      const padR = 0.0019 + Math.min(0.0032, Math.sqrt(f.area) * 0.26);
-      const tipGrowth = isTip || f.ageDays < 55;
+    for (let ring = 0; ring < rings; ring++) {
+      const t = (ring + 0.5) / rings;
+      // Slightly denser toward tip
+      const densify = 0.75 + t * 0.45;
+      const along = base.clone().addScaledVector(dir, t * len);
+      const ringTwist = t * 2.4 + node.ageDays * 0.01;
 
-      for (let s = 0; s < count; s++) {
-        const layer = Math.floor(s / perLayer);
-        const inLayer = s % perLayer;
-        const ang =
-          f.azimuth +
-          (inLayer / perLayer) * Math.PI * 2 +
-          layer * 0.28 +
-          f.t * 1.3;
-        const cos = Math.cos(ang);
-        const sin = Math.sin(ang);
-        const spin = new THREE.Vector3(
-          radial.x * cos + binormal.x * sin,
-          radial.y * cos + binormal.y * sin,
-          radial.z * cos + binormal.z * sin,
-        ).normalize();
+      for (let layer = 0; layer < layers; layer++) {
+        const nAround = Math.max(6, Math.floor(perRing * densify) - layer * 2);
+        for (let k = 0; k < nAround; k++) {
+          const ang = ringTwist + (k / nAround) * Math.PI * 2 + layer * 0.4;
+          const cos = Math.cos(ang);
+          const sin = Math.sin(ang);
+          const spin = new THREE.Vector3(
+            normal.x * cos + binormal.x * sin,
+            normal.y * cos + binormal.y * sin,
+            normal.z * cos + binormal.z * sin,
+          ).normalize();
 
-        const radialOff = r + padR * (0.08 + layer * 0.18);
-        const alongOff =
-          (inLayer % 5) * padR * 0.09 - padR * 0.15 + layer * padR * 0.06;
+          const radialOff = r + scaleBase * (0.35 + layer * 0.55);
+          const pos = along
+            .clone()
+            .addScaledVector(spin, radialOff)
+            .addScaledVector(dir, (k % 3) * scaleBase * 0.04);
 
-        const pos = along
-          .clone()
-          .addScaledVector(spin, radialOff)
-          .addScaledVector(dir, alongOff);
+          // Scales wrap tightly around the axis
+          const face = spin
+            .clone()
+            .multiplyScalar(0.92)
+            .addScaledVector(dir, 0.12 + layer * 0.05)
+            .normalize();
 
-        // Scales hug the shoot — more radial, less leaf-like
-        const face = spin
-          .clone()
-          .multiplyScalar(0.88)
-          .addScaledVector(dir, 0.18 + layer * 0.04)
-          .normalize();
-
-        const quat = new THREE.Quaternion().setFromUnitVectors(
-          new THREE.Vector3(0, 0, 1),
-          face,
-        );
-        quat.multiply(
-          new THREE.Quaternion().setFromAxisAngle(
+          const quat = new THREE.Quaternion().setFromUnitVectors(
             new THREE.Vector3(0, 0, 1),
-            ang * 0.5 + layer * 0.4,
-          ),
-        );
+            face,
+          );
+          quat.multiply(
+            new THREE.Quaternion().setFromAxisAngle(
+              new THREE.Vector3(0, 0, 1),
+              ang * 0.6 + layer * 0.3,
+            ),
+          );
 
-        const sc =
-          padR *
-          (0.75 + (s % 4) * 0.06) *
-          (0.85 + 0.18 * f.efficiency) *
-          (1 - layer * 0.05);
-        out.push({
-          position: pos,
-          quaternion: quat,
-          scale: new THREE.Vector3(sc, sc * 1.15, sc),
-          tip: tipGrowth && layer < 2,
-        });
+          const sc = scaleBase * (0.85 + (k % 4) * 0.05) * (1 - layer * 0.08);
+          out.push({
+            position: pos,
+            quaternion: quat,
+            scale: new THREE.Vector3(sc, sc * 1.2, sc),
+            tip: tipGrowth && t > 0.55,
+          });
+        }
       }
     }
 
-    // Dense apex spray (conical tip of tiny scales)
+    // Tip pad cloud — soft conical mass of overlapping scales
     if (isTip) {
       const tip = new THREE.Vector3(...frame.tip);
-      for (let i = 0; i < 28; i++) {
-        const ang = (i / 28) * Math.PI * 2 + 0.2;
-        const ring = Math.floor(i / 14);
+      for (let i = 0; i < 48; i++) {
+        const u = i / 48;
+        const ang = u * Math.PI * 2 * 3.2;
+        const elev = (i % 8) / 8;
         const spin2 = new THREE.Vector3(
           normal.x * Math.cos(ang) + binormal.x * Math.sin(ang),
           normal.y * Math.cos(ang) + binormal.y * Math.sin(ang),
@@ -376,19 +342,20 @@ export class TreeRenderer {
         ).normalize();
         const face = spin2
           .clone()
-          .multiplyScalar(0.55 + ring * 0.08)
-          .addScaledVector(dir, 0.65 - ring * 0.08)
+          .multiplyScalar(0.5 + elev * 0.2)
+          .addScaledVector(dir, 0.7 - elev * 0.15)
           .normalize();
+        const sc = 0.0016 + (i % 5) * 0.00015;
         out.push({
           position: tip
             .clone()
-            .addScaledVector(dir, 0.0006 + ring * 0.001)
-            .addScaledVector(spin2, r * 0.5 + 0.0004 + ring * 0.0006),
+            .addScaledVector(dir, 0.0004 + elev * 0.0022)
+            .addScaledVector(spin2, r * 0.35 + elev * 0.002),
           quaternion: new THREE.Quaternion().setFromUnitVectors(
             new THREE.Vector3(0, 0, 1),
             face,
           ),
-          scale: new THREE.Vector3(0.0015, 0.002, 0.0015),
+          scale: new THREE.Vector3(sc, sc * 1.25, sc),
           tip: true,
         });
       }
