@@ -14,8 +14,11 @@ import { POT_SOIL_LOCAL_Y } from './pot';
 
 const UP = new THREE.Vector3(0, 1, 0);
 const MIN_VISUAL_RADIUS = 0.0016;
-/** Soft cap so large trees stay interactive on mobile / headless. */
-const MAX_SCALE_INSTANCES = 16000;
+/**
+ * Soft cap so large trees stay interactive on mobile / headless.
+ * Lowered from 16k (#34) — pad clouds still read full; write/rebuild cost drops.
+ */
+const MAX_SCALE_INSTANCES = 9000;
 
 interface ScaleInstance {
   position: THREE.Vector3;
@@ -87,7 +90,8 @@ export class TreeRenderer {
   private highlightRim: THREE.Mesh | null = null;
   private selectedId: NodeId | null = null;
   private scaleGeo: THREE.BufferGeometry | null = null;
-  private radialSegments = 14;
+  /** Branch cylinder tessellation — 10 is enough for bonsai scale (#34 rebuild cost). */
+  private radialSegments = 10;
   private readonly _dummy = new THREE.Object3D();
   private readonly _jointGeo = new THREE.SphereGeometry(1, 12, 10);
   /** Scratch vectors for decoration re-pose (avoid GC in applyPose). */
