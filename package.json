@@ -12,7 +12,8 @@
     "test:smoke": "node scripts/smoke-boot.mjs",
     "screenshots": "node scripts/screenshot.mjs",
     "playtest": "node scripts/playtest.mjs",
-    "practice:match": "node scripts/practice-match.mjs"
+    "practice:match": "node scripts/practice-match.mjs",
+    "practice:shokunin": "node scripts/practice-shokunin.mjs"
   },
   "dependencies": {
     "lz-string": "^1.5.0",
