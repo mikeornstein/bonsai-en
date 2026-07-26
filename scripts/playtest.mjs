@@ -533,13 +533,23 @@ await scenario(page, 'S10', 'Share hash', false, async () => {
   const status = await page.evaluate(
     () => document.getElementById('status')?.textContent?.trim(),
   );
-  // copyShareLink refuses URLs > 8000 chars
+  // copyShareLink refuses URLs > MAX_SHARE_URL_LENGTH (24k; hash not sent to server)
+  const MAX_SHARE_URL_LENGTH = 24_000;
   const fullUrlApprox = 80 + hash.length;
-  if (fullUrlApprox > 8000) {
+  if (fullUrlApprox > MAX_SHARE_URL_LENGTH) {
     addFinding(
       'playability',
       'Share link falls back to file download early',
-      `At ~${s.nodeCount} nodes, hash length=${hash.length} (URL ≳${fullUrlApprox} > 8000). Share-by-link only works for very small trees.`,
+      `At ~${s.nodeCount} nodes, hash length=${hash.length} (URL ≳${fullUrlApprox} > ${MAX_SHARE_URL_LENGTH}).`,
+      'S10',
+    );
+  }
+  // Soft note if status still shows fallback despite smaller hash (clipboard etc.)
+  if (status && /too large for a share link/i.test(status) && fullUrlApprox <= MAX_SHARE_URL_LENGTH) {
+    addFinding(
+      'playability',
+      'Share reported too-large despite URL under limit',
+      `status="${status}", url≈${fullUrlApprox}`,
       'S10',
     );
   }
