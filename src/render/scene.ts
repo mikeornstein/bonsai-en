@@ -105,36 +105,46 @@ export class BonsaiScene {
     const envRT = pmrem.fromEquirectangular(equirect);
     this.envMap = envRT.texture;
     this.scene.environment = this.envMap;
-    this.scene.environmentIntensity = 0.7;
+    this.scene.environmentIntensity = 0.58;
     equirect.dispose();
     pmrem.dispose();
   }
 
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0xf2f6ff, 0xc8b8a4, 0.45);
+    // Soft cool sky / warm floor — product photo balance
+    const hemi = new THREE.HemisphereLight(0xf4f7fc, 0xd0c4b0, 0.52);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff6ea, 1.4);
-    sun.position.set(0.75, 2.1, 1.05);
+    const sun = new THREE.DirectionalLight(0xfff4e8, 1.55);
+    sun.position.set(0.9, 2.4, 1.15);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(2048, 2048);
+    const softGL = /SwiftShader|llvmpipe|Software/i.test(
+      (() => {
+        const gl = this.renderer.getContext() as WebGLRenderingContext;
+        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+        return dbg
+          ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '')
+          : '';
+      })(),
+    );
+    sun.shadow.mapSize.set(softGL ? 1024 : 2048, softGL ? 1024 : 2048);
     sun.shadow.camera.near = 0.05;
     sun.shadow.camera.far = 6;
-    sun.shadow.camera.left = -0.55;
-    sun.shadow.camera.right = 0.55;
-    sun.shadow.camera.top = 0.55;
-    sun.shadow.camera.bottom = -0.2;
-    sun.shadow.bias = -0.0002;
-    sun.shadow.normalBias = 0.018;
-    sun.shadow.radius = 3;
+    sun.shadow.camera.left = -0.6;
+    sun.shadow.camera.right = 0.6;
+    sun.shadow.camera.top = 0.6;
+    sun.shadow.camera.bottom = -0.25;
+    sun.shadow.bias = -0.00015;
+    sun.shadow.normalBias = 0.012;
+    sun.shadow.radius = softGL ? 2 : 4.5;
     this.scene.add(sun);
 
-    const fill = new THREE.DirectionalLight(0xd8e4ff, 0.3);
-    fill.position.set(-1.5, 0.85, -0.7);
+    const fill = new THREE.DirectionalLight(0xdce6ff, 0.32);
+    fill.position.set(-1.6, 0.9, -0.65);
     this.scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xffffff, 0.2);
-    rim.position.set(0.1, 0.55, -1.4);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.22);
+    rim.position.set(0.05, 0.6, -1.5);
     this.scene.add(rim);
   }
 

@@ -74,19 +74,19 @@ export function barkMaterialForSegment(
 
 export function createFoliageMaterial(): THREE.MeshPhysicalMaterial {
   if (!foliageMature) {
-    foliageMature = createFoliageAlbedoTexture([38, 88, 42]);
+    foliageMature = createFoliageAlbedoTexture([32, 78, 38]);
   }
   return new THREE.MeshPhysicalMaterial({
     map: foliageMature,
-    color: new THREE.Color('#5f9a52'),
-    roughness: 0.78,
+    color: new THREE.Color('#4a7a42'),
+    roughness: 0.8,
     metalness: 0,
-    sheen: 0.35,
-    sheenRoughness: 0.55,
-    sheenColor: new THREE.Color('#8fbf6a'),
+    sheen: 0.28,
+    sheenRoughness: 0.6,
+    sheenColor: new THREE.Color('#7aaa5a'),
     side: THREE.DoubleSide,
     transparent: true,
-    alphaTest: 0.22,
+    alphaTest: 0.28,
     depthWrite: true,
     polygonOffset: true,
     polygonOffsetFactor: 1,
@@ -96,19 +96,19 @@ export function createFoliageMaterial(): THREE.MeshPhysicalMaterial {
 
 export function createFoliageTipMaterial(): THREE.MeshPhysicalMaterial {
   if (!foliageTip) {
-    foliageTip = createFoliageAlbedoTexture([62, 120, 48]);
+    foliageTip = createFoliageAlbedoTexture([55, 108, 42]);
   }
   return new THREE.MeshPhysicalMaterial({
     map: foliageTip,
-    color: new THREE.Color('#7fb862'),
-    roughness: 0.7,
+    color: new THREE.Color('#6a9e52'),
+    roughness: 0.72,
     metalness: 0,
-    sheen: 0.45,
-    sheenRoughness: 0.48,
-    sheenColor: new THREE.Color('#b0d878'),
+    sheen: 0.38,
+    sheenRoughness: 0.5,
+    sheenColor: new THREE.Color('#9ccc68'),
     side: THREE.DoubleSide,
     transparent: true,
-    alphaTest: 0.22,
+    alphaTest: 0.28,
     depthWrite: true,
     polygonOffset: true,
     polygonOffsetFactor: 1,
