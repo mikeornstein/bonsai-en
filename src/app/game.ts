@@ -80,6 +80,11 @@ export interface PerfSample {
   avgFrameMs: number;
   nodeCount: number;
   freeJoints: number;
+  /**
+   * True when this frame skipped elastic dynamics (pure growth fast-forward
+   * with a still camera). Useful for harness / debug only.
+   */
+  physicsCulled: boolean;
 }
 
 export class Game {
@@ -103,15 +108,24 @@ export class Game {
   private visualCooldownTimer = 0;
   private pendingVisual = false;
   private physicsNeedsSync = true;
+  /**
+   * When true, next physics rebind also wakes all joints (prune / mass shock).
+   * Pure growth rebinds keep sleep so Years FF does not thrash collisions.
+   */
+  private physicsNeedsWake = false;
   private lastSeason: string | null = null;
   private idleTimer = 0;
   private statusUnfadeTimer = 0;
   /** Last full frame cost (ms) for harness perf sampling. */
   private lastFrameMs = 0;
   private avgFrameMs = 0;
+  /** Whether the last frame culled elastic dynamics (see PerfSample). */
+  private lastPhysicsCulled = false;
   /** Throttle practice score HUD updates. */
   private practiceHudTimer = 0;
   private lastPracticeLabel = '';
+  /** Throttle HUD refresh under year/month acceleration. */
+  private hudCooldownTimer = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -147,11 +161,56 @@ export class Game {
     });
   }
 
-  /** Rebuild physics graph from structural tree (after tools / growth). */
+  /**
+   * Rebuild physics graph from structural tree (after tools / growth).
+   * Wakes joints only when `physicsNeedsWake` is set (prune / load shocks) —
+   * pure growth rebind preserves sleep so Years fast-forward stays cheap.
+   */
   private syncPhysics(): void {
     syncPhysicsWorld(this.physics, this.tree);
-    wakeAllJoints(this.physics);
+    if (this.physicsNeedsWake) {
+      wakeAllJoints(this.physics);
+      this.physicsNeedsWake = false;
+    }
     this.physicsNeedsSync = false;
+  }
+
+  /** Mark physics graph dirty; optional full wake for structural shocks. */
+  private markPhysicsDirty(wake = false): void {
+    this.physicsNeedsSync = true;
+    if (wake) this.physicsNeedsWake = true;
+  }
+
+  /**
+   * Cap plant-day substeps per frame under acceleration.
+   * Keeps 1-day growth rules exact; plant-time may lag wall clock under stress
+   * instead of hitching harder as node count grows (issue #34).
+   */
+  private growthMaxSteps(nodeCount: number): number {
+    if (this.speed === 'year') {
+      if (nodeCount > 220) return 24;
+      if (nodeCount > 140) return 36;
+      if (nodeCount > 80) return 48;
+      return 64;
+    }
+    if (this.speed === 'month') {
+      if (nodeCount > 200) return 20;
+      if (nodeCount > 100) return 28;
+      return 40;
+    }
+    if (this.speed === 'week') return 24;
+    return 16;
+  }
+
+  /**
+   * Mesh rebuild interval (seconds of wall time) by speed mode.
+   * Years/months need stronger throttle — rebuild is O(nodes + foliage).
+   */
+  private visualIntervalSec(): number {
+    if (this.speed === 'year') return 0.45;
+    if (this.speed === 'month') return 0.3;
+    if (this.speed === 'week') return 0.16;
+    return 0.05;
   }
 
   /** Freeze dynamics for stable screenshots / ortho audits. */
@@ -215,6 +274,7 @@ export class Game {
       avgFrameMs: this.avgFrameMs,
       nodeCount: Object.keys(this.tree.nodes).length,
       freeJoints: tel.freeJoints,
+      physicsCulled: this.lastPhysicsCulled,
     };
   }
 
@@ -272,7 +332,7 @@ export class Game {
       if (r.ok) {
         this.selected = null;
         this.scene.setSelected(null);
-        this.physicsNeedsSync = true;
+        this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('prune');
       }
@@ -284,7 +344,7 @@ export class Game {
       const r = pinchAt(this.tree, nodeId);
       this.setStatus(r.message);
       if (r.ok) {
-        this.physicsNeedsSync = true;
+        this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('pinch');
       }
@@ -295,7 +355,7 @@ export class Game {
     if (tool === 'wire') {
       const r = applyWire(this.tree, nodeId);
       this.setStatus(r.message);
-      this.physicsNeedsSync = true;
+      this.markPhysicsDirty(false);
       this.scene.markDirty();
       this.refreshHud();
       return r;
@@ -305,7 +365,7 @@ export class Game {
     const r = removeWire(this.tree, nodeId);
     this.setStatus(r.message);
     if (r.ok) {
-      this.physicsNeedsSync = true;
+      this.markPhysicsDirty(false);
       resetJointElastic(this.physics, nodeId);
       this.scene.markDirty();
     }
@@ -320,7 +380,7 @@ export class Game {
     }
     bendWiredNode(this.tree, nodeId, dir);
     resetJointElastic(this.physics, nodeId);
-    this.physicsNeedsSync = true;
+    this.markPhysicsDirty(false);
     this.scene.markDirty();
     this.refreshHud();
     return { ok: true, message: 'Bent' };
@@ -333,7 +393,7 @@ export class Game {
     clearLocal();
     history.replaceState(null, '', window.location.pathname + window.location.search);
     this.scene.setSelected(null);
-    this.physicsNeedsSync = true;
+    this.markPhysicsDirty(true);
     this.syncPhysics();
     this.scene.markDirty();
     this.scene.syncTree(
@@ -434,7 +494,7 @@ export class Game {
         this.tree = parseTree(text);
         this.selected = null;
         this.scene.setSelected(null);
-        this.physicsNeedsSync = true;
+        this.markPhysicsDirty(true);
         this.syncPhysics();
         this.scene.markDirty();
         saveLocal(this.tree);
@@ -528,7 +588,7 @@ export class Game {
         if (dir) {
           bendWiredNode(this.tree, this.selected, dir);
           resetJointElastic(this.physics, this.selected);
-          this.physicsNeedsSync = true;
+          this.markPhysicsDirty(false);
           this.scene.markDirty();
         }
       }
@@ -596,12 +656,20 @@ export class Game {
   }
 
   setSpeed(speed: SpeedMode): void {
+    const prev = this.speed;
     this.speed = speed;
     document.querySelectorAll<HTMLButtonElement>('[data-speed]').forEach((btn) => {
       const raw = btn.dataset.speed!;
       const mode = raw === '0' ? 'pause' : raw;
       btn.classList.toggle('active', mode === speed);
     });
+    // Leaving pure growth FF: rebind + wake so canopy re-settles with new mass.
+    const wasFF = prev === 'year' || prev === 'month';
+    const nowFF = speed === 'year' || speed === 'month';
+    if (wasFF && !nowFF) {
+      this.markPhysicsDirty(true);
+      this.refreshHud();
+    }
     // Flush pending mesh when pausing so player sees final structure
     if (speed === 'pause' && this.pendingVisual) {
       this.pendingVisual = false;
@@ -672,27 +740,31 @@ export class Game {
 
   update(dt: number): void {
     const frameStart = performance.now();
+    const nodeCount = Object.keys(this.tree.nodes).length;
     const rate = SPEED_PLANT_DAYS_PER_SECOND[this.speed];
     if (rate > 0) {
       this.accum += dt * rate;
-      // More substeps when accelerating so plant-time keeps up with wall clock
-      const maxSteps =
-        this.speed === 'year'
-          ? 120
-          : this.speed === 'month'
-            ? 60
-            : this.speed === 'week'
-              ? 28
-              : 16;
+      // Adaptive substep cap — see growthMaxSteps (#34)
+      const maxSteps = this.growthMaxSteps(nodeCount);
       if (this.accum >= 1) {
         const steps = tickDays(this.tree, this.accum, maxSteps);
         this.accum -= steps;
         if (this.accum < 0) this.accum = 0;
         if (this.accum > maxSteps) this.accum = this.accum % 1;
         this.pendingVisual = true;
-        this.physicsNeedsSync = true;
-        this.refreshHud();
+        // Growth changes mass/topology; rebind without wake (sleep preserved).
+        this.markPhysicsDirty(false);
         this.applySeasonVisuals();
+        // HUD is DOM-heavy; throttle under year/month acceleration.
+        if (this.speed === 'year' || this.speed === 'month') {
+          this.hudCooldownTimer += dt;
+          if (this.hudCooldownTimer >= 0.28) {
+            this.hudCooldownTimer = 0;
+            this.refreshHud();
+          }
+        } else {
+          this.refreshHud();
+        }
       }
     }
 
@@ -704,17 +776,14 @@ export class Game {
       document.getElementById('hud')?.classList.add('idle-fade');
     }
 
-    // Rebuild mesh at a capped rate during fast-forward (sim stays full-speed)
+    // Rebuild mesh at a capped rate during fast-forward (sim still advances)
     this.visualCooldownTimer += dt;
-    const visualInterval =
-      this.speed === 'year' || this.speed === 'month'
-        ? 0.2
-        : this.speed === 'week'
-          ? 0.12
-          : 0.05;
+    const visualInterval = this.visualIntervalSec();
+    let visualThisFrame = false;
     if (this.pendingVisual && this.visualCooldownTimer >= visualInterval) {
       this.visualCooldownTimer = 0;
       this.pendingVisual = false;
+      visualThisFrame = true;
       this.scene.markDirty();
       this.scene.frameTree(this.tree);
     }
@@ -742,25 +811,50 @@ export class Game {
     // Freeze dynamics in ortho audit views so screenshots stay stable
     freezePhysics(this.physics, !this.scene.isPlayView());
 
-    if (this.physicsNeedsSync) {
-      this.syncPhysics();
-    }
-
     // Orbit damping first so camera kinematics match what the user sees
     if (this.scene.isPlayView()) {
       this.scene.controls.update();
     }
     const cam = this.scene.sampleCameraMotion(dt);
-    stepPhysics(this.physics, this.tree, dt, {
-      gravity: true,
-      cameraAccel: cam.accel,
-      cameraAlpha: cam.alpha,
-      enabled: cam.active,
-    });
 
-    const liveFrames = computeLiveWorldFrames(this.tree, this.physics);
-    this.scene.syncTree(this.tree, liveFrames);
-    this.scene.applyTreePose(this.tree, liveFrames);
+    // Pure growth FF (Years/Months + still camera): skip elastic integrate,
+    // collision, and per-frame foliage re-pose. Structure still advances via
+    // tickDays; mesh rebuilds on visualInterval; leaving FF wakes joints.
+    const pureGrowthFF =
+      (this.speed === 'year' || this.speed === 'month') &&
+      !cam.active &&
+      this.scene.isPlayView();
+
+    this.lastPhysicsCulled = pureGrowthFF;
+
+    // During pureGrowthFF only rebind joints when we need live frames (rebuild).
+    // Otherwise defer sync until dynamics resume or a visual rebuild lands.
+    if (this.physicsNeedsSync && (!pureGrowthFF || visualThisFrame)) {
+      this.syncPhysics();
+    }
+
+    if (!pureGrowthFF) {
+      stepPhysics(this.physics, this.tree, dt, {
+        gravity: true,
+        cameraAccel: cam.accel,
+        cameraAlpha: cam.alpha,
+        enabled: cam.active,
+      });
+    }
+
+    if (pureGrowthFF) {
+      // Structural rebuild only (growth throttle or selection dirty). No pose stream.
+      if (visualThisFrame || this.scene.isTreeDirty()) {
+        if (this.physicsNeedsSync) this.syncPhysics();
+        const liveFrames = computeLiveWorldFrames(this.tree, this.physics);
+        this.scene.syncTree(this.tree, liveFrames);
+      }
+      // Clean non-rebuild frames: leave last mesh as-is while plant-time advances.
+    } else {
+      const liveFrames = computeLiveWorldFrames(this.tree, this.physics);
+      this.scene.syncTree(this.tree, liveFrames);
+      this.scene.applyTreePose(this.tree, liveFrames);
+    }
     this.scene.render(true);
 
     this.lastFrameMs = performance.now() - frameStart;

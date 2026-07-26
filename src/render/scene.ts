@@ -416,6 +416,11 @@ export class BonsaiScene {
     this.dirty = true;
   }
 
+  /** Whether a structural tree mesh rebuild is pending. */
+  isTreeDirty(): boolean {
+    return this.dirty;
+  }
+
   setSelected(id: NodeId | null): void {
     this.treeRenderer.setSelected(id);
     this.dirty = true;
