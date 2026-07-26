@@ -44,16 +44,33 @@ export class Game {
   private pendingVisual = false;
 
   constructor(canvas: HTMLCanvasElement) {
-    this.scene = new BonsaiScene(canvas);
-    this.tree = this.bootstrapTree();
     this.statusEl = document.getElementById('status')!;
     this.hintEl = document.getElementById('hint')!;
+    // Scene first (WebGL + meshes). UI binds even if later tree work is slow.
+    this.scene = new BonsaiScene(canvas);
     this.bindUi();
     this.bindPointer(canvas);
+
+    this.tree = this.bootstrapTree();
+    // Recover bad autosaves before first paint
+    if (!this.tree.rootId || !this.tree.nodes[this.tree.rootId]) {
+      console.warn('[bonsai-en] invalid tree state, creating new sapling');
+      this.tree = createSapling();
+      clearLocal();
+      this.setStatus('Started a new sapling (previous save was invalid)');
+    }
     this.refreshHud();
     this.scene.markDirty();
-    this.scene.syncTree(this.tree);
-    this.scene.frameTree(this.tree);
+    // Defer mesh build so HUD/buttons paint immediately
+    requestAnimationFrame(() => {
+      try {
+        this.scene.syncTree(this.tree);
+        this.scene.frameTree(this.tree);
+      } catch (err) {
+        console.error('[bonsai-en] initial tree sync failed', err);
+        this.setStatus(`Tree render failed: ${(err as Error).message}`);
+      }
+    });
   }
 
   private bootstrapTree(): TreeState {

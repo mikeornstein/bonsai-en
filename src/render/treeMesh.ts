@@ -43,17 +43,18 @@ function createScaleGeometry(): THREE.BufferGeometry {
 
 export class TreeRenderer {
   readonly group = new THREE.Group();
-  private barkMat = createBarkMaterial();
-  private foliageMat = createFoliageMaterial();
-  private foliageTipMat = createFoliageTipMaterial();
-  private wireMat = createWireMaterial();
-  private highlightMat = createHighlightMaterial();
+  /** Lazily created so scene boot isn't blocked by procedural textures. */
+  private barkMat: THREE.MeshStandardMaterial | null = null;
+  private foliageMat: THREE.MeshPhysicalMaterial | null = null;
+  private foliageTipMat: THREE.MeshPhysicalMaterial | null = null;
+  private wireMat: THREE.MeshPhysicalMaterial | null = null;
+  private highlightMat: THREE.MeshBasicMaterial | null = null;
   private branchGroup = new THREE.Group();
   private foliageGroup = new THREE.Group();
   private wireGroup = new THREE.Group();
   private highlightMesh: THREE.Mesh | null = null;
   private selectedId: NodeId | null = null;
-  private scaleGeo = createScaleGeometry();
+  private scaleGeo: THREE.BufferGeometry | null = null;
   private radialSegments = 14;
   private readonly _dummy = new THREE.Object3D();
   private readonly _jointGeo = new THREE.SphereGeometry(1, 12, 10);
@@ -65,11 +66,21 @@ export class TreeRenderer {
     this.group.add(this.branchGroup, this.foliageGroup, this.wireGroup);
   }
 
+  private ensureMaterials(): void {
+    if (!this.barkMat) this.barkMat = createBarkMaterial();
+    if (!this.foliageMat) this.foliageMat = createFoliageMaterial();
+    if (!this.foliageTipMat) this.foliageTipMat = createFoliageTipMaterial();
+    if (!this.wireMat) this.wireMat = createWireMaterial();
+    if (!this.highlightMat) this.highlightMat = createHighlightMaterial();
+    if (!this.scaleGeo) this.scaleGeo = createScaleGeometry();
+  }
+
   setSelected(id: NodeId | null): void {
     this.selectedId = id;
   }
 
   rebuild(tree: TreeState): void {
+    this.ensureMaterials();
     this.clearGroup(this.branchGroup);
     this.clearGroup(this.foliageGroup);
     this.clearGroup(this.wireGroup);
@@ -123,7 +134,7 @@ export class TreeRenderer {
           r,
           r * 0.9,
           frame,
-          this.highlightMat,
+          this.highlightMat!,
         );
         this.highlightMesh.userData.nodeId = this.selectedId;
         this.group.add(this.highlightMesh);
@@ -157,7 +168,7 @@ export class TreeRenderer {
       r1 = r0 * 0.55;
     }
 
-    const mat = barkMaterialForSegment(this.barkMat, node.length, node.radius);
+    const mat = barkMaterialForSegment(this.barkMat!, node.length, node.radius);
     // Younger / thinner shoots: greener cambium tint
     const youth = Math.max(0, 1 - node.lignification);
     if (youth > 0.15) {
@@ -371,12 +382,12 @@ export class TreeRenderer {
     }
     if (mature.length) {
       this.foliageGroup.add(
-        this.makeInstancedScales(mature, this.foliageMat),
+        this.makeInstancedScales(mature, this.foliageMat!),
       );
     }
     if (tips.length) {
       this.foliageGroup.add(
-        this.makeInstancedScales(tips, this.foliageTipMat),
+        this.makeInstancedScales(tips, this.foliageTipMat!),
       );
     }
   }
@@ -385,7 +396,7 @@ export class TreeRenderer {
     items: ScaleInstance[],
     mat: THREE.Material,
   ): THREE.InstancedMesh {
-    const mesh = new THREE.InstancedMesh(this.scaleGeo, mat, items.length);
+    const mesh = new THREE.InstancedMesh(this.scaleGeo!, mat, items.length);
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     mesh.frustumCulled = true;
@@ -430,19 +441,18 @@ export class TreeRenderer {
     }
     const curve = new THREE.CatmullRomCurve3(points);
     const geo = new THREE.TubeGeometry(curve, segs, 0.00055, 6, false);
-    const mesh = new THREE.Mesh(geo, this.wireMat);
+    const mesh = new THREE.Mesh(geo, this.wireMat!);
     mesh.castShadow = true;
     this.wireGroup.add(mesh);
   }
 
   private clearGroup(g: THREE.Group): void {
-    const sharedMats = new Set<THREE.Material>([
-      this.barkMat,
-      this.foliageMat,
-      this.foliageTipMat,
-      this.wireMat,
-      this.highlightMat,
-    ]);
+    const sharedMats = new Set<THREE.Material>();
+    if (this.barkMat) sharedMats.add(this.barkMat);
+    if (this.foliageMat) sharedMats.add(this.foliageMat);
+    if (this.foliageTipMat) sharedMats.add(this.foliageTipMat);
+    if (this.wireMat) sharedMats.add(this.wireMat);
+    if (this.highlightMat) sharedMats.add(this.highlightMat);
     while (g.children.length) {
       const c = g.children.pop()!;
       if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) {
@@ -464,12 +474,12 @@ export class TreeRenderer {
     this.clearGroup(this.branchGroup);
     this.clearGroup(this.foliageGroup);
     this.clearGroup(this.wireGroup);
-    this.scaleGeo.dispose();
+    this.scaleGeo?.dispose();
     this._jointGeo.dispose();
-    this.barkMat.dispose();
-    this.foliageMat.dispose();
-    this.foliageTipMat.dispose();
-    this.wireMat.dispose();
-    this.highlightMat.dispose();
+    this.barkMat?.dispose();
+    this.foliageMat?.dispose();
+    this.foliageTipMat?.dispose();
+    this.wireMat?.dispose();
+    this.highlightMat?.dispose();
   }
 }
