@@ -43,6 +43,44 @@ export function createEmptyTree(speciesId: string, seed: number): TreeState {
   };
 }
 
+/**
+ * True when a tree can drive the game HUD and renderer.
+ * Guards the boot failure mode where the app stays on HTML defaults
+ * (Age "0 d", Season "—", dead buttons) because state never initialized.
+ */
+export function isPlayableTree(
+  tree: TreeState | null | undefined,
+): tree is TreeState {
+  if (!tree || typeof tree !== 'object') return false;
+  if (tree.schemaVersion !== 1) return false;
+  if (!tree.speciesId || typeof tree.speciesId !== 'string') return false;
+  if (!tree.rootId || typeof tree.rootId !== 'string') return false;
+  if (!tree.nodes || typeof tree.nodes !== 'object') return false;
+  const root = tree.nodes[tree.rootId];
+  if (!root || root.id !== tree.rootId) return false;
+  if (!root.living) return false;
+  if (!(tree.agePlantDays >= 0) || !Number.isFinite(tree.agePlantDays)) {
+    return false;
+  }
+  // At least the root segment must have a positive length to render
+  if (!(root.length > 0) || !(root.radius > 0)) return false;
+  return true;
+}
+
+/**
+ * Return tree if playable; otherwise a fresh sapling.
+ * Used by Game bootstrap so corrupt autosaves never brick the UI.
+ */
+export function ensurePlayableTree(
+  tree: TreeState | null | undefined,
+  speciesId = 'juniper-procumbens',
+): { tree: TreeState; recovered: boolean } {
+  if (isPlayableTree(tree)) {
+    return { tree, recovered: false };
+  }
+  return { tree: createSapling(speciesId), recovered: true };
+}
+
 function makeBud(
   tree: TreeState,
   type: Bud['type'],
