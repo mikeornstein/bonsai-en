@@ -62,6 +62,19 @@ export const juniper: SpeciesDefinition = {
 
   saplingStemNodes: 7,
   saplingLaterals: 4,
+
+  physics: {
+    woodDensity: 650,
+    // Visual-scale moduli (see DEFAULT_PHYSICS_CONFIG) — not FEA wood
+    youngModulusGreen: 1.1e4,
+    youngModulusLignified: 2.25e5,
+    dampingRatio: 92,
+    foliageMassScale: 3.5e-5,
+    maxDeflectionRad: 0.35,
+    gravity: 9.81 * 0.22,
+    cameraForceGain: 0.28,
+    wireStiffnessMult: 12,
+  },
 };
 
 export const SPECIES_REGISTRY: Record<string, SpeciesDefinition> = {

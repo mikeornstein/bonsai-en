@@ -60,6 +60,11 @@ body {
   gap: 10px;
 }
 
+/* Screenshot harness: geometry-audit orthographic captures hide HUD chrome */
+body.screenshot-hide-ui #hud {
+  display: none;
+}
+
 .hud-header {
   pointer-events: none;
   max-width: 280px;

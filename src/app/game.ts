@@ -20,6 +20,18 @@ import {
   treeFromShareHash,
 } from '../share/encode';
 import { getSpecies } from '../sim/species/juniper';
+import {
+  computeLiveWorldFrames,
+  createPhysicsWorld,
+  freezePhysics,
+  measureTelemetry,
+  resetJointElastic,
+  stepPhysics,
+  syncPhysicsWorld,
+  wakeAllJoints,
+  type PhysicsTelemetry,
+  type PhysicsWorld,
+} from '../sim/physics';
 
 export type ToolMode = 'inspect' | 'prune' | 'pinch' | 'wire' | 'unwire';
 
@@ -29,6 +41,7 @@ export class Game {
   tool: ToolMode = 'inspect';
   speed: SpeedMode = 'live';
   selected: NodeId | null = null;
+  physics: PhysicsWorld;
 
   private accum = 0;
   private wiring = false;
@@ -42,6 +55,7 @@ export class Game {
   /** Throttle expensive mesh rebuilds during time acceleration. */
   private visualCooldownTimer = 0;
   private pendingVisual = false;
+  private physicsNeedsSync = true;
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -58,18 +72,57 @@ export class Game {
       clearLocal();
       this.setStatus('Started a new sapling (previous save was invalid)');
     }
+    const species = getSpecies(this.tree.speciesId);
+    this.physics = createPhysicsWorld(this.tree, { ...species.physics });
     this.refreshHud();
     this.scene.markDirty();
     // Defer mesh build so HUD/buttons paint immediately
     requestAnimationFrame(() => {
       try {
-        this.scene.syncTree(this.tree);
+        this.syncPhysics();
+        this.scene.syncTree(this.tree, computeLiveWorldFrames(this.tree, this.physics));
         this.scene.frameTree(this.tree);
       } catch (err) {
         console.error('[bonsai-en] initial tree sync failed', err);
         this.setStatus(`Tree render failed: ${(err as Error).message}`);
       }
     });
+  }
+
+  /** Rebuild physics graph from structural tree (after tools / growth). */
+  private syncPhysics(): void {
+    syncPhysicsWorld(this.physics, this.tree);
+    wakeAllJoints(this.physics);
+    this.physicsNeedsSync = false;
+  }
+
+  /** Freeze dynamics for stable screenshots / ortho audits. */
+  setPhysicsFrozen(frozen: boolean): void {
+    freezePhysics(this.physics, frozen);
+  }
+
+  /** Quantitative motion snapshot (max/rms ω, KE, sleep count). */
+  getPhysicsTelemetry(): PhysicsTelemetry {
+    return measureTelemetry(this.physics);
+  }
+
+  /** Reset to a fresh sapling (no confirm dialog — used by screenshot harness). */
+  newSapling(): void {
+    this.tree = createSapling();
+    this.selected = null;
+    clearLocal();
+    history.replaceState(null, '', window.location.pathname + window.location.search);
+    this.scene.setSelected(null);
+    this.physicsNeedsSync = true;
+    this.syncPhysics();
+    this.scene.markDirty();
+    this.scene.syncTree(
+      this.tree,
+      computeLiveWorldFrames(this.tree, this.physics),
+    );
+    this.scene.frameTree(this.tree);
+    this.setStatus('New juniper sapling');
+    this.refreshHud();
   }
 
   private bootstrapTree(): TreeState {
@@ -104,16 +157,7 @@ export class Game {
 
     document.getElementById('btn-new')?.addEventListener('click', () => {
       if (confirm('Start a new juniper sapling? Unsaved changes may be lost.')) {
-        this.tree = createSapling();
-        this.selected = null;
-        clearLocal();
-        history.replaceState(null, '', window.location.pathname + window.location.search);
-        this.scene.setSelected(null);
-        this.scene.markDirty();
-        this.scene.syncTree(this.tree);
-        this.scene.frameTree(this.tree);
-        this.setStatus('New juniper sapling');
-        this.refreshHud();
+        this.newSapling();
       }
     });
 
@@ -139,6 +183,8 @@ export class Game {
         this.tree = parseTree(text);
         this.selected = null;
         this.scene.setSelected(null);
+        this.physicsNeedsSync = true;
+        this.syncPhysics();
         this.scene.markDirty();
         saveLocal(this.tree);
         this.setStatus(`Imported ${file.name}`);
@@ -202,6 +248,8 @@ export class Game {
         );
         if (dir) {
           bendWiredNode(this.tree, this.selected, dir);
+          resetJointElastic(this.physics, this.selected);
+          this.physicsNeedsSync = true;
           this.scene.markDirty();
         }
       }
@@ -245,20 +293,29 @@ export class Game {
       if (r.ok) {
         this.selected = null;
         this.scene.setSelected(null);
+        this.physicsNeedsSync = true;
         this.scene.markDirty();
       }
     } else if (this.tool === 'pinch') {
       const r = pinchAt(this.tree, id);
       this.setStatus(r.message);
-      if (r.ok) this.scene.markDirty();
+      if (r.ok) {
+        this.physicsNeedsSync = true;
+        this.scene.markDirty();
+      }
     } else if (this.tool === 'wire') {
       const r = applyWire(this.tree, id);
       this.setStatus(r.message);
+      this.physicsNeedsSync = true;
       this.scene.markDirty();
     } else if (this.tool === 'unwire') {
       const r = removeWire(this.tree, id);
       this.setStatus(r.message);
-      if (r.ok) this.scene.markDirty();
+      if (r.ok) {
+        this.physicsNeedsSync = true;
+        resetJointElastic(this.physics, id);
+        this.scene.markDirty();
+      }
     }
 
     this.refreshHud();
@@ -338,6 +395,7 @@ export class Game {
         if (this.accum < 0) this.accum = 0;
         if (this.accum > maxSteps) this.accum = this.accum % 1;
         this.pendingVisual = true;
+        this.physicsNeedsSync = true;
         this.refreshHud();
       }
     }
@@ -363,7 +421,28 @@ export class Game {
       saveLocal(this.tree);
     }
 
-    this.scene.syncTree(this.tree);
-    this.scene.render();
+    // Freeze dynamics in ortho audit views so screenshots stay stable
+    freezePhysics(this.physics, !this.scene.isPlayView());
+
+    if (this.physicsNeedsSync) {
+      this.syncPhysics();
+    }
+
+    // Orbit damping first so camera kinematics match what the user sees
+    if (this.scene.isPlayView()) {
+      this.scene.controls.update();
+    }
+    const cam = this.scene.sampleCameraMotion(dt);
+    stepPhysics(this.physics, this.tree, dt, {
+      gravity: true,
+      cameraAccel: cam.accel,
+      cameraAlpha: cam.alpha,
+      enabled: cam.active,
+    });
+
+    const liveFrames = computeLiveWorldFrames(this.tree, this.physics);
+    this.scene.syncTree(this.tree, liveFrames);
+    this.scene.applyTreePose(this.tree, liveFrames);
+    this.scene.render(true);
   }
 }
