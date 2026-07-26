@@ -17,6 +17,8 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const dir = path.resolve(__dirname, '../screenshots');
 fs.mkdirSync(dir, { recursive: true });
 
+const BASE_URL = process.env.BONSAI_URL || 'http://localhost:5173/';
+
 const browser = await puppeteer.launch({
   headless: true,
   protocolTimeout: 180000,
@@ -64,7 +66,7 @@ async function freshPage(width, height) {
     }
   });
   // Clear storage before first paint so we don't need a mid-session reload
-  await page.goto('http://localhost:5173/', {
+  await page.goto(BASE_URL, {
     waitUntil: 'domcontentloaded',
     timeout: 60000,
   });
