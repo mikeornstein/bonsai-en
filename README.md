@@ -54,6 +54,7 @@ Simulation code lives in `src/sim/` (no Three.js). Rendering in `src/render/` pr
 | `npm run preview` | Preview production build |
 | `npm test` | Vitest unit tests for growth / prune / wire |
 | `npm run screenshots` | Headless captures → `screenshots/*.png` (dev server must be up) |
+| `npm run playtest` | Scenario playthrough → `playtest-reports/` (dev server must be up) |
 
 ## Contributing workflow
 

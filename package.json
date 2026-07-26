@@ -10,7 +10,8 @@
     "test": "vitest run",
     "test:watch": "vitest",
     "test:smoke": "node scripts/smoke-boot.mjs",
-    "screenshots": "node scripts/screenshot.mjs"
+    "screenshots": "node scripts/screenshot.mjs",
+    "playtest": "node scripts/playtest.mjs"
   },
   "dependencies": {
     "lz-string": "^1.5.0",
