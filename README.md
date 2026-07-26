@@ -53,6 +53,7 @@ Simulation code lives in `src/sim/` (no Three.js). Rendering in `src/render/` pr
 | `npm run build` | Typecheck + production build to `dist/` |
 | `npm run preview` | Preview production build |
 | `npm test` | Vitest unit tests for growth / prune / wire |
+| `npm run screenshots` | Headless captures → `screenshots/*.png` (dev server must be up) |
 
 ## GitHub Pages
 
@@ -61,9 +62,18 @@ Push to `main` runs `.github/workflows/deploy.yml`:
 1. `npm ci` · `npm test` · `npm run build` with `GITHUB_PAGES=true` (base `/bonsai-en/`)  
 2. Deploys the `dist` artifact to GitHub Pages  
 
-Enable **Settings → Pages → Source: GitHub Actions** on the repository.
+Source must be **Settings → Pages → GitHub Actions** (or enable via API — see deploy docs below).
 
 For a custom repo name, change `base` in `vite.config.ts` to match `https://<user>.github.io/<repo>/`.
+
+### Debugging & deploy (for developers and Grok)
+
+| Doc | Audience |
+|-----|----------|
+| [AGENTS.md](./AGENTS.md) | Short playbook for automated agents |
+| [docs/DEBUGGING_AND_DEPLOY.md](./docs/DEBUGGING_AND_DEPLOY.md) | Full CI, Pages, screenshots, and push troubleshooting |
+
+Agents should pull CI failures with `gh run view <id> --log-failed` instead of asking for pasted logs.
 
 ## Save format
 
