@@ -1,5 +1,7 @@
-import { Game } from './app/game';
+import { Game, type GameSnapshot, type NodeSummary, type PerfSample, type ToolMode } from './app/game';
+import type { SpeedMode } from './sim/time';
 import type { CameraViewName } from './render/scene';
+import type { Vec3 } from './sim/types';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 if (!canvas) {
@@ -20,7 +22,7 @@ function showBootError(err: unknown): void {
   }
 }
 
-/** Screenshot / geometry-audit harness used by scripts/screenshot.mjs */
+/** Screenshot / playtest harness used by scripts/*.mjs */
 export interface BonsaiHarness {
   setView(view: CameraViewName): void;
   getView(): CameraViewName;
@@ -39,6 +41,19 @@ export interface BonsaiHarness {
     contacts: number;
     simTime: number;
   };
+  getSnapshot(): GameSnapshot;
+  listNodes(): NodeSummary[];
+  setTool(tool: ToolMode): void;
+  setSpeed(speed: SpeedMode): void;
+  act(
+    tool: ToolMode,
+    nodeId: string,
+  ): { ok: boolean; message: string };
+  bend(nodeId: string, dir: Vec3): { ok: boolean; message: string };
+  getPerf(): PerfSample;
+  saveNow(): void;
+  exportJson(): string;
+  getShareHash(): string | null;
 }
 
 declare global {
@@ -76,6 +91,36 @@ try {
     },
     getPhysicsTelemetry() {
       return game.getPhysicsTelemetry();
+    },
+    getSnapshot() {
+      return game.getSnapshot();
+    },
+    listNodes() {
+      return game.listNodes();
+    },
+    setTool(tool: ToolMode) {
+      game.setTool(tool);
+    },
+    setSpeed(speed: SpeedMode) {
+      game.setSpeed(speed);
+    },
+    act(tool: ToolMode, nodeId: string) {
+      return game.actOnNode(tool, nodeId);
+    },
+    bend(nodeId: string, dir: Vec3) {
+      return game.bendNode(nodeId, dir);
+    },
+    getPerf() {
+      return game.getPerf();
+    },
+    saveNow() {
+      game.saveNow();
+    },
+    exportJson() {
+      return game.exportJson();
+    },
+    getShareHash() {
+      return game.getShareHash();
     },
   };
 

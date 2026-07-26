@@ -208,6 +208,18 @@ npm test
 npm run build        # tsc && vite build
 ```
 
+**Playtests (agent / regression):** with the dev server up, run the scenario playthrough:
+
+```bash
+# Terminal A
+npm run dev
+
+# Terminal B
+npm run playtest     # → playtest-reports/latest.md + shots (gitignored)
+```
+
+Hard scenario failures exit non-zero. Soft findings (playability, SwiftShader perf) land in the report. Harness API: `window.__bonsai.getSnapshot()`, `act(tool, nodeId)`, `setSpeed`, `listNodes`, `getPerf`.
+
 **Visual changes:** always verify with screenshots (do not ship renderer changes un-checked).
 
 ```bash

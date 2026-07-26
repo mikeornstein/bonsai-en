@@ -11,8 +11,8 @@ import {
 import { createSapling, ensurePlayableTree } from '../sim/tree';
 import { pinchAt, pruneAt } from '../sim/tools/prune';
 import { applyWire, bendWiredNode, removeWire } from '../sim/tools/wire';
-import { downloadTree, parseTree } from '../sim/serialize';
-import type { NodeId, TreeState } from '../sim/types';
+import { downloadTree, parseTree, serializeTree } from '../sim/serialize';
+import type { NodeId, TreeState, Vec3 } from '../sim/types';
 import { BonsaiScene } from '../render/scene';
 import {
   clearLocal,
@@ -20,6 +20,7 @@ import {
   loadLocal,
   saveLocal,
   treeFromShareHash,
+  treeToShareHash,
 } from '../share/encode';
 import { getSpecies } from '../sim/species/juniper';
 import {
@@ -36,6 +37,42 @@ import {
 } from '../sim/physics';
 
 export type ToolMode = 'inspect' | 'prune' | 'pinch' | 'wire' | 'unwire';
+
+/** Playtest / harness snapshot of live game state. */
+export interface GameSnapshot {
+  agePlantDays: number;
+  ageLabel: string;
+  season: string;
+  vitalityWord: string;
+  reserves: number;
+  nodeCount: number;
+  livingCount: number;
+  wiredCount: number;
+  tool: ToolMode;
+  speed: SpeedMode;
+  selected: string | null;
+  status: string;
+  physics: PhysicsTelemetry;
+}
+
+export interface NodeSummary {
+  id: string;
+  parentId: string | null;
+  living: boolean;
+  isLeaf: boolean;
+  hasWire: boolean;
+  length: number;
+  radius: number;
+  lignification: number;
+  wireSetAmount: number | null;
+}
+
+export interface PerfSample {
+  lastFrameMs: number;
+  avgFrameMs: number;
+  nodeCount: number;
+  freeJoints: number;
+}
 
 export class Game {
   tree: TreeState;
@@ -61,6 +98,9 @@ export class Game {
   private lastSeason: string | null = null;
   private idleTimer = 0;
   private statusUnfadeTimer = 0;
+  /** Last full frame cost (ms) for harness perf sampling. */
+  private lastFrameMs = 0;
+  private avgFrameMs = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -111,6 +151,155 @@ export class Game {
   /** Quantitative motion snapshot (max/rms ω, KE, sleep count). */
   getPhysicsTelemetry(): PhysicsTelemetry {
     return measureTelemetry(this.physics);
+  }
+
+  /** Full play-state snapshot for automated playtests. */
+  getSnapshot(): GameSnapshot {
+    const nodes = Object.values(this.tree.nodes);
+    const env = environmentAt(this.tree.agePlantDays);
+    return {
+      agePlantDays: this.tree.agePlantDays,
+      ageLabel: formatAge(this.tree.agePlantDays),
+      season: seasonLabel(env.season),
+      vitalityWord: vitalityWord(this.tree.reserves),
+      reserves: this.tree.reserves,
+      nodeCount: nodes.length,
+      livingCount: nodes.filter((n) => n.living).length,
+      wiredCount: nodes.filter((n) => Boolean(n.wire)).length,
+      tool: this.tool,
+      speed: this.speed,
+      selected: this.selected,
+      status: this.statusEl.textContent ?? '',
+      physics: measureTelemetry(this.physics),
+    };
+  }
+
+  /** Lightweight node list for picking targets without raycasts. */
+  listNodes(): NodeSummary[] {
+    return Object.values(this.tree.nodes).map((n) => ({
+      id: n.id,
+      parentId: n.parentId,
+      living: n.living,
+      isLeaf: n.children.length === 0,
+      hasWire: Boolean(n.wire),
+      length: n.length,
+      radius: n.radius,
+      lignification: n.lignification,
+      wireSetAmount: n.wire ? n.wire.setAmount : null,
+    }));
+  }
+
+  getPerf(): PerfSample {
+    const tel = measureTelemetry(this.physics);
+    return {
+      lastFrameMs: this.lastFrameMs,
+      avgFrameMs: this.avgFrameMs,
+      nodeCount: Object.keys(this.tree.nodes).length,
+      freeJoints: tel.freeJoints,
+    };
+  }
+
+  /** Persist current tree via the same path as the Save menu item. */
+  saveNow(): void {
+    saveLocal(this.tree);
+    this.setStatus('Saved to this browser');
+  }
+
+  /** Serialized tree JSON (export without triggering a download). */
+  exportJson(): string {
+    return serializeTree(this.tree);
+  }
+
+  /** Share hash fragment (`#s=...`) or null if encode fails. */
+  getShareHash(): string | null {
+    try {
+      return treeToShareHash(this.tree);
+    } catch {
+      return null;
+    }
+  }
+
+  /**
+   * Apply a tool to a known node id (bypasses raycast).
+   * Used by the playtest harness for deterministic branch actions.
+   */
+  actOnNode(
+    tool: ToolMode,
+    nodeId: NodeId,
+  ): { ok: boolean; message: string } {
+    const node = this.tree.nodes[nodeId];
+    if (!node) {
+      return { ok: false, message: 'No such branch' };
+    }
+
+    this.setTool(tool);
+    this.selected = nodeId;
+    this.scene.setSelected(nodeId);
+
+    if (tool === 'inspect') {
+      this.setStatus('This branch');
+      this.refreshHud();
+      return { ok: true, message: 'This branch' };
+    }
+
+    if (tool === 'prune') {
+      const r = pruneAt(this.tree, nodeId);
+      this.setStatus(r.message);
+      if (r.ok) {
+        this.selected = null;
+        this.scene.setSelected(null);
+        this.physicsNeedsSync = true;
+        this.scene.markDirty();
+        this.scene.treeRenderer.pulseToolFeedback('prune');
+      }
+      this.refreshHud();
+      return r;
+    }
+
+    if (tool === 'pinch') {
+      const r = pinchAt(this.tree, nodeId);
+      this.setStatus(r.message);
+      if (r.ok) {
+        this.physicsNeedsSync = true;
+        this.scene.markDirty();
+        this.scene.treeRenderer.pulseToolFeedback('pinch');
+      }
+      this.refreshHud();
+      return r;
+    }
+
+    if (tool === 'wire') {
+      const r = applyWire(this.tree, nodeId);
+      this.setStatus(r.message);
+      this.physicsNeedsSync = true;
+      this.scene.markDirty();
+      this.refreshHud();
+      return r;
+    }
+
+    // unwire
+    const r = removeWire(this.tree, nodeId);
+    this.setStatus(r.message);
+    if (r.ok) {
+      this.physicsNeedsSync = true;
+      resetJointElastic(this.physics, nodeId);
+      this.scene.markDirty();
+    }
+    this.refreshHud();
+    return r;
+  }
+
+  /** Bend a (wired) node toward a world-ish direction — harness path. */
+  bendNode(nodeId: NodeId, dir: Vec3): { ok: boolean; message: string } {
+    if (!this.tree.nodes[nodeId]) {
+      return { ok: false, message: 'No such branch' };
+    }
+    bendWiredNode(this.tree, nodeId, dir);
+    resetJointElastic(this.physics, nodeId);
+    this.physicsNeedsSync = true;
+    this.scene.markDirty();
+    this.refreshHud();
+    return { ok: true, message: 'Bent' };
   }
 
   /** Reset to a fresh sapling (no confirm dialog — used by screenshot harness). */
@@ -340,49 +529,16 @@ export class Game {
       return;
     }
 
-    this.selected = id;
-    this.scene.setSelected(id);
-
-    if (this.tool === 'inspect') {
-      this.setStatus('This branch');
-    } else if (this.tool === 'prune') {
-      const r = pruneAt(this.tree, id);
-      this.setStatus(r.message);
-      if (r.ok) {
-        this.selected = null;
-        this.scene.setSelected(null);
-        this.physicsNeedsSync = true;
-        this.scene.markDirty();
-        this.scene.treeRenderer.pulseToolFeedback('prune');
-        void import('../render/audio').then((a) => a.playToolSound('prune'));
-      }
-    } else if (this.tool === 'pinch') {
-      const r = pinchAt(this.tree, id);
-      this.setStatus(r.message);
-      if (r.ok) {
-        this.physicsNeedsSync = true;
-        this.scene.markDirty();
-        this.scene.treeRenderer.pulseToolFeedback('pinch');
-        void import('../render/audio').then((a) => a.playToolSound('pinch'));
-      }
-    } else if (this.tool === 'wire') {
-      const r = applyWire(this.tree, id);
-      this.setStatus(r.message);
-      this.physicsNeedsSync = true;
-      this.scene.markDirty();
-      if (r.ok) void import('../render/audio').then((a) => a.playToolSound('wire'));
-    } else if (this.tool === 'unwire') {
-      const r = removeWire(this.tree, id);
-      this.setStatus(r.message);
-      if (r.ok) {
-        this.physicsNeedsSync = true;
-        resetJointElastic(this.physics, id);
-        this.scene.markDirty();
-        void import('../render/audio').then((a) => a.playToolSound('unwire'));
+    const r = this.actOnNode(this.tool, id);
+    if (r.ok && this.tool !== 'inspect') {
+      const sound =
+        this.tool === 'prune' || this.tool === 'pinch' || this.tool === 'wire' || this.tool === 'unwire'
+          ? this.tool
+          : null;
+      if (sound) {
+        void import('../render/audio').then((a) => a.playToolSound(sound));
       }
     }
-
-    this.refreshHud();
   }
 
   setTool(tool: ToolMode): void {
@@ -483,6 +639,7 @@ export class Game {
   }
 
   update(dt: number): void {
+    const frameStart = performance.now();
     const rate = SPEED_PLANT_DAYS_PER_SECOND[this.speed];
     if (rate > 0) {
       this.accum += dt * rate;
@@ -559,5 +716,12 @@ export class Game {
     this.scene.syncTree(this.tree, liveFrames);
     this.scene.applyTreePose(this.tree, liveFrames);
     this.scene.render(true);
+
+    this.lastFrameMs = performance.now() - frameStart;
+    // Exponential moving average (~0.5s at 60fps)
+    this.avgFrameMs =
+      this.avgFrameMs === 0
+        ? this.lastFrameMs
+        : this.avgFrameMs * 0.9 + this.lastFrameMs * 0.1;
   }
 }

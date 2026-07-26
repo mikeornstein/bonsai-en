@@ -438,3 +438,4 @@ When the user reports a problem:
 | [`.github/workflows/deploy.yml`](../.github/workflows/deploy.yml) | Deploy to Pages on `main` |
 | [`vite.config.ts`](../vite.config.ts) | Base path for Pages |
 | [`scripts/screenshot.mjs`](../scripts/screenshot.mjs) | Visual regression capture |
+| [`scripts/playtest.mjs`](../scripts/playtest.mjs) | Scenario playthrough + report (`npm run playtest`) |

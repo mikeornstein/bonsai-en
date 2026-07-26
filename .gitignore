@@ -10,3 +10,6 @@ coverage
 .vite
 screenshots/*.png
 screenshots/*.json
+
+# Playtest runner artifacts
+playtest-reports/
