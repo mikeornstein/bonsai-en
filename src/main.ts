@@ -27,6 +27,8 @@ export interface BonsaiHarness {
   setUiVisible(visible: boolean): void;
   setPhysicsFrozen(frozen: boolean): void;
   newSapling(): void;
+  setSumiChallenge(on: boolean): void;
+  setMuted(on: boolean): void;
   getPhysicsTelemetry(): {
     maxOmega: number;
     rmsOmega: number;
@@ -65,6 +67,12 @@ try {
     },
     newSapling() {
       game.newSapling();
+    },
+    setSumiChallenge(on: boolean) {
+      game.scene.sumi.setEnabled(on);
+    },
+    setMuted(on: boolean) {
+      void import('./render/audio').then((a) => a.setMuted(on));
     },
     getPhysicsTelemetry() {
       return game.getPhysicsTelemetry();

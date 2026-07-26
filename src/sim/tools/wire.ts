@@ -20,7 +20,7 @@ export function applyWire(tree: TreeState, nodeId: NodeId): WireResult {
     installedPlantDay: tree.agePlantDays,
     tension: 0.4,
   };
-  return { ok: true, message: 'Wire applied — drag to bend' };
+  return { ok: true, message: 'Wire on · drag to set the line' };
 }
 
 export function removeWire(tree: TreeState, nodeId: NodeId): WireResult {
@@ -43,8 +43,8 @@ export function removeWire(tree: TreeState, nodeId: NodeId): WireResult {
     ok: true,
     message:
       setAmount > 0.85
-        ? 'Wire removed — shape largely set'
-        : `Wire removed — ${(spring * 100).toFixed(0)}% spring-back`,
+        ? 'Wire off · wood holds the bend'
+        : 'Wire off · wood springs back',
   };
 }
 

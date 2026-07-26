@@ -17,10 +17,10 @@ export function pruneAt(tree: TreeState, nodeId: NodeId): PruneResult {
   const node = tree.nodes[nodeId];
   if (!node) return { ok: false, message: 'No branch selected', removed: 0 };
   if (nodeId === tree.rootId) {
-    return { ok: false, message: 'Cannot prune the trunk base', removed: 0 };
+    return { ok: false, message: 'Leave the trunk base', removed: 0 };
   }
   if (!node.living) {
-    return { ok: false, message: 'Branch already dead', removed: 0 };
+    return { ok: false, message: 'Already gone', removed: 0 };
   }
 
   const species = getSpecies(tree.speciesId);
@@ -60,7 +60,10 @@ export function pruneAt(tree: TreeState, nodeId: NodeId): PruneResult {
 
   return {
     ok: true,
-    message: `Pruned ${removed} segment${removed === 1 ? '' : 's'}`,
+    message:
+      removed <= 1
+        ? 'Cut clean · mass lightened'
+        : 'Cut clean · canopy lightened',
     removed,
   };
 }
@@ -122,7 +125,7 @@ export function pinchAt(tree: TreeState, nodeId: NodeId): PruneResult {
     }
   }
 
-  return { ok: true, message: 'Pinched tip', removed: 0 };
+  return { ok: true, message: 'Tip pinched · laterals waking', removed: 0 };
 }
 
 function countSubtree(tree: TreeState, nodeId: NodeId): number {
