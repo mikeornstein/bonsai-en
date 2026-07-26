@@ -24,6 +24,10 @@ import {
 } from '../share/encode';
 import { getSpecies } from '../sim/species/juniper';
 import {
+  scorePracticeMatch,
+  type PracticeScore,
+} from '../sim/practice/score';
+import {
   computeLiveWorldFrames,
   createPhysicsWorld,
   freezePhysics,
@@ -65,6 +69,10 @@ export interface NodeSummary {
   radius: number;
   lignification: number;
   wireSetAmount: number | null;
+  /** Soil-local tip position (for practice targeting / automation). */
+  tipX: number;
+  tipY: number;
+  tipZ: number;
 }
 
 export interface PerfSample {
@@ -101,6 +109,9 @@ export class Game {
   /** Last full frame cost (ms) for harness perf sampling. */
   private lastFrameMs = 0;
   private avgFrameMs = 0;
+  /** Throttle practice score HUD updates. */
+  private practiceHudTimer = 0;
+  private lastPracticeLabel = '';
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -176,17 +187,25 @@ export class Game {
 
   /** Lightweight node list for picking targets without raycasts. */
   listNodes(): NodeSummary[] {
-    return Object.values(this.tree.nodes).map((n) => ({
-      id: n.id,
-      parentId: n.parentId,
-      living: n.living,
-      isLeaf: n.children.length === 0,
-      hasWire: Boolean(n.wire),
-      length: n.length,
-      radius: n.radius,
-      lignification: n.lignification,
-      wireSetAmount: n.wire ? n.wire.setAmount : null,
-    }));
+    const frames = computeLiveWorldFrames(this.tree, this.physics);
+    return Object.values(this.tree.nodes).map((n) => {
+      const f = frames.get(n.id);
+      const tip = f?.tip ?? [0, 0, 0];
+      return {
+        id: n.id,
+        parentId: n.parentId,
+        living: n.living,
+        isLeaf: n.children.length === 0,
+        hasWire: Boolean(n.wire),
+        length: n.length,
+        radius: n.radius,
+        lignification: n.lignification,
+        wireSetAmount: n.wire ? n.wire.setAmount : null,
+        tipX: tip[0],
+        tipY: tip[1],
+        tipZ: tip[2],
+      };
+    });
   }
 
   getPerf(): PerfSample {
@@ -197,6 +216,11 @@ export class Game {
       nodeCount: Object.keys(this.tree.nodes).length,
       freeJoints: tel.freeJoints,
     };
+  }
+
+  /** Quantitative match of living silhouette to sumi practice target. */
+  getPracticeScore(): PracticeScore {
+    return scorePracticeMatch(this.tree);
   }
 
   /** Persist current tree via the same path as the Save menu item. */
@@ -446,7 +470,15 @@ export class Game {
       closeFiles();
       const on = !this.scene.sumi.isEnabled();
       this.scene.sumi.setEnabled(on);
-      this.setStatus(on ? 'Sumi practice · soft ink guide' : 'Free train');
+      if (on) {
+        const s = this.getPracticeScore();
+        this.scene.sumi.applyScoreFeedback(s);
+        this.setStatus(s.label);
+        this.lastPracticeLabel = s.label;
+      } else {
+        this.setStatus('Free train');
+        this.lastPracticeLabel = '';
+      }
       const btn = document.getElementById('btn-sumi');
       if (btn) btn.textContent = on ? 'Practice on' : 'Practice';
     });
@@ -691,6 +723,20 @@ export class Game {
     if (this.autosaveTimer > 15) {
       this.autosaveTimer = 0;
       saveLocal(this.tree);
+    }
+
+    // Practice mode: quiet score in status + ink feedback (throttled)
+    if (this.scene.sumi.isEnabled()) {
+      this.practiceHudTimer += dt;
+      if (this.practiceHudTimer > 1.2) {
+        this.practiceHudTimer = 0;
+        const s = this.getPracticeScore();
+        this.scene.sumi.applyScoreFeedback(s);
+        if (s.label !== this.lastPracticeLabel) {
+          this.lastPracticeLabel = s.label;
+          this.setStatus(s.label);
+        }
+      }
     }
 
     // Freeze dynamics in ortho audit views so screenshots stay stable

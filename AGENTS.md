@@ -218,7 +218,9 @@ npm run dev
 npm run playtest     # → playtest-reports/latest.md + shots (gitignored)
 ```
 
-Hard scenario failures exit non-zero. Soft findings (playability, SwiftShader perf) land in the report. Harness API: `window.__bonsai.getSnapshot()`, `act(tool, nodeId)`, `setSpeed`, `listNodes`, `getPerf`.
+Hard scenario failures exit non-zero. Soft findings (playability, SwiftShader perf) land in the report. Harness API: `window.__bonsai.getSnapshot()`, `act(tool, nodeId)`, `setSpeed`, `listNodes`, `getPerf`, `getPracticeScore()`.
+
+**Practice (sumi) mode:** toggle via UI or `setSumiChallenge(true)`. Score with `getPracticeScore()` (containment, band fit, centerline, height). Deep dive: [docs/practice-mode.md](./docs/practice-mode.md). Automated train: `npm run practice:match`.
 
 **Visual changes:** always verify with screenshots (do not ship renderer changes un-checked).
 

@@ -2,6 +2,7 @@ import { Game, type GameSnapshot, type NodeSummary, type PerfSample, type ToolMo
 import type { SpeedMode } from './sim/time';
 import type { CameraViewName } from './render/scene';
 import type { Vec3 } from './sim/types';
+import type { PracticeScore } from './sim/practice/score';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 if (!canvas) {
@@ -54,6 +55,7 @@ export interface BonsaiHarness {
   saveNow(): void;
   exportJson(): string;
   getShareHash(): string | null;
+  getPracticeScore(): PracticeScore;
 }
 
 declare global {
@@ -85,6 +87,13 @@ try {
     },
     setSumiChallenge(on: boolean) {
       game.scene.sumi.setEnabled(on);
+      if (on) {
+        const s = game.getPracticeScore();
+        game.scene.sumi.applyScoreFeedback(s);
+      }
+    },
+    getPracticeScore() {
+      return game.getPracticeScore();
     },
     setMuted(on: boolean) {
       void import('./render/audio').then((a) => a.setMuted(on));
