@@ -15,32 +15,51 @@ import {
 } from './textures';
 import { TreeRenderer } from './treeMesh';
 
+function detectSoftGL(renderer: THREE.WebGLRenderer): boolean {
+  try {
+    const gl = renderer.getContext() as WebGLRenderingContext;
+    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
+    if (!dbg) return false;
+    const gpu = String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '');
+    return /SwiftShader|llvmpipe|Software|Microsoft Basic/i.test(gpu);
+  } catch {
+    return false;
+  }
+}
+
 export class BonsaiScene {
   readonly renderer: THREE.WebGLRenderer;
   readonly scene: THREE.Scene;
   readonly camera: THREE.PerspectiveCamera;
   readonly controls: OrbitControls;
-  readonly treeRenderer = new TreeRenderer();
+  readonly treeRenderer: TreeRenderer;
   readonly raycaster = new THREE.Raycaster();
   readonly pointer = new THREE.Vector2();
 
-  private pot = createPotGroup();
-  private studioBase = createStudioBase();
+  private pot: THREE.Group;
+  private studioBase: THREE.Group;
   /** Raises pot + tree onto the pedestal top. */
   private stage = new THREE.Group();
   private dirty = true;
-  private bgTex = createStudioBackgroundTexture();
+  private bgTex: THREE.Texture;
   private envMap: THREE.Texture | null = null;
   private post: StudioPost | null = null;
+  private softGL = false;
 
   constructor(canvas: HTMLCanvasElement) {
+    // WebGL first — fail fast with a clear error if unavailable
     this.renderer = new THREE.WebGLRenderer({
       canvas,
       antialias: true,
       alpha: false,
       powerPreference: 'high-performance',
+      failIfMajorPerformanceCaveat: false,
     });
-    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2));
+    if (!this.renderer.getContext()) {
+      throw new Error('WebGL context could not be created');
+    }
+
+    this.renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
     this.renderer.setSize(window.innerWidth, window.innerHeight, false);
     this.renderer.shadowMap.enabled = true;
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
@@ -48,12 +67,20 @@ export class BonsaiScene {
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
     this.renderer.toneMappingExposure = 1.02;
 
+    this.softGL = detectSoftGL(this.renderer);
+
     this.scene = new THREE.Scene();
-    this.scene.background = this.bgTex;
+    try {
+      this.bgTex = createStudioBackgroundTexture();
+      this.scene.background = this.bgTex;
+    } catch {
+      this.bgTex = new THREE.Texture();
+      this.scene.background = new THREE.Color(0xe6e1d8);
+    }
 
     this.camera = new THREE.PerspectiveCamera(
       32,
-      window.innerWidth / window.innerHeight,
+      Math.max(window.innerWidth, 1) / Math.max(window.innerHeight, 1),
       0.01,
       50,
     );
@@ -70,6 +97,11 @@ export class BonsaiScene {
 
     this.setupLights();
 
+    // Heavy scene graph after renderer is alive
+    this.treeRenderer = new TreeRenderer();
+    this.pot = createPotGroup();
+    this.studioBase = createStudioBase();
+
     this.stage.position.y = PEDESTAL_HEIGHT;
     this.stage.add(this.pot);
     this.stage.add(this.treeRenderer.group);
@@ -77,23 +109,28 @@ export class BonsaiScene {
     this.scene.add(this.studioBase);
     this.scene.add(this.stage);
 
-    // Lightweight equirect IBL (avoids RoomEnvironment ReadPixels stalls)
-    this.setupEnvironment();
+    // IBL + post are best-effort (must not block boot)
+    try {
+      this.setupEnvironment();
+    } catch (err) {
+      console.warn('[bonsai-en] environment setup failed', err);
+    }
 
-    // Soft SMAA + grade — skip software GL (SwiftShader / screenshot CI)
-    const gl = this.renderer.getContext() as WebGLRenderingContext;
-    const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-    const gpu = dbg
-      ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '')
-      : '';
-    const isSoftGL = /SwiftShader|llvmpipe|Software|Microsoft Basic/i.test(gpu);
-    if (!isSoftGL) {
-      try {
-        this.post = new StudioPost(this.renderer, this.scene, this.camera);
-        this.post.setSize(window.innerWidth, window.innerHeight);
-      } catch {
-        this.post = null;
-      }
+    // Post is optional polish — never block boot. Disabled on soft GL;
+    // on real GPUs enable only after first frames so tree always appears.
+    if (!this.softGL) {
+      requestAnimationFrame(() => {
+        try {
+          this.post = new StudioPost(this.renderer, this.scene, this.camera);
+          this.post.setSize(
+            Math.max(window.innerWidth, 1),
+            Math.max(window.innerHeight, 1),
+          );
+        } catch (err) {
+          console.warn('[bonsai-en] post stack disabled', err);
+          this.post = null;
+        }
+      });
     }
 
     window.addEventListener('resize', this.onResize);
@@ -111,23 +148,14 @@ export class BonsaiScene {
   }
 
   private setupLights(): void {
-    // Soft cool sky / warm floor — product photo balance
     const hemi = new THREE.HemisphereLight(0xf4f7fc, 0xd0c4b0, 0.52);
     this.scene.add(hemi);
 
     const sun = new THREE.DirectionalLight(0xfff4e8, 1.55);
     sun.position.set(0.9, 2.4, 1.15);
     sun.castShadow = true;
-    const softGL = /SwiftShader|llvmpipe|Software/i.test(
-      (() => {
-        const gl = this.renderer.getContext() as WebGLRenderingContext;
-        const dbg = gl.getExtension('WEBGL_debug_renderer_info');
-        return dbg
-          ? String(gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) ?? '')
-          : '';
-      })(),
-    );
-    sun.shadow.mapSize.set(softGL ? 1024 : 2048, softGL ? 1024 : 2048);
+    const map = this.softGL ? 1024 : 2048;
+    sun.shadow.mapSize.set(map, map);
     sun.shadow.camera.near = 0.05;
     sun.shadow.camera.far = 6;
     sun.shadow.camera.left = -0.6;
@@ -136,7 +164,7 @@ export class BonsaiScene {
     sun.shadow.camera.bottom = -0.25;
     sun.shadow.bias = -0.00015;
     sun.shadow.normalBias = 0.012;
-    sun.shadow.radius = softGL ? 2 : 4.5;
+    sun.shadow.radius = this.softGL ? 2 : 4.5;
     this.scene.add(sun);
 
     const fill = new THREE.DirectionalLight(0xdce6ff, 0.32);
@@ -149,8 +177,8 @@ export class BonsaiScene {
   }
 
   private onResize = () => {
-    const w = window.innerWidth;
-    const h = window.innerHeight;
+    const w = Math.max(window.innerWidth, 1);
+    const h = Math.max(window.innerHeight, 1);
     this.camera.aspect = w / h;
     this.camera.updateProjectionMatrix();
     this.renderer.setSize(w, h, false);
@@ -168,7 +196,11 @@ export class BonsaiScene {
 
   syncTree(tree: TreeState): void {
     if (!this.dirty) return;
-    this.treeRenderer.rebuild(tree);
+    try {
+      this.treeRenderer.rebuild(tree);
+    } catch (err) {
+      console.error('[bonsai-en] tree rebuild failed', err);
+    }
     this.dirty = false;
   }
 
@@ -201,6 +233,7 @@ export class BonsaiScene {
 
   pickNode(clientX: number, clientY: number): NodeId | null {
     const rect = this.renderer.domElement.getBoundingClientRect();
+    if (rect.width < 1 || rect.height < 1) return null;
     this.pointer.x = ((clientX - rect.left) / rect.width) * 2 - 1;
     this.pointer.y = -((clientY - rect.top) / rect.height) * 2 + 1;
     this.raycaster.setFromCamera(this.pointer, this.camera);
@@ -247,10 +280,16 @@ export class BonsaiScene {
   render(): void {
     this.controls.update();
     if (this.post?.isEnabled) {
-      this.post.render();
-    } else {
-      this.renderer.render(this.scene, this.camera);
+      try {
+        this.post.render();
+        return;
+      } catch (err) {
+        console.warn('[bonsai-en] post render failed, falling back', err);
+        this.post?.setEnabled(false);
+        this.post = null;
+      }
     }
+    this.renderer.render(this.scene, this.camera);
   }
 
   dispose(): void {

@@ -60,7 +60,9 @@ export class StudioPost {
 
     const size = renderer.getSize(new THREE.Vector2());
     const pr = renderer.getPixelRatio();
-    this.smaa = new SMAAPass(size.x * pr, size.y * pr);
+    const w = Math.max(1, Math.floor(size.x * pr));
+    const h = Math.max(1, Math.floor(size.y * pr));
+    this.smaa = new SMAAPass(w, h);
     this.composer.addPass(this.smaa);
 
     this.grade = new ShaderPass(GradeShader);
