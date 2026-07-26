@@ -3,6 +3,7 @@ import { getSpecies } from './species/juniper';
 import { environmentAt } from './time';
 import {
   addAxillaryBud,
+  chooseLateralAzimuth,
   extendFromBud,
   totalFoliageArea,
   totalWoodyVolume,
@@ -101,7 +102,9 @@ function updateDominanceAndBuds(
       node.buds.filter((b) => b.type === 'axillary').length < 3 &&
       rng() < species.lateralBudChance * seasonMul
     ) {
-      addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, rng() * Math.PI * 2);
+      // Phyllotaxis + min sibling angle + optional free-space probe (#39)
+      const azimuth = chooseLateralAzimuth(tree, node.id, species, rng);
+      addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, azimuth);
     }
 
     node.wound = Math.max(0, node.wound * 0.97 - 0.002);

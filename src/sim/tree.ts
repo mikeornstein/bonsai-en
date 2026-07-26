@@ -1,4 +1,5 @@
 import {
+  clamp,
   createRng,
   quatFromAxisAngle,
   quatFromUnitToUnit,
@@ -21,6 +22,280 @@ import type {
   TreeState,
   Vec3,
 } from './types';
+
+/** Golden angle ≈ 137.5° — successive phyllotactic step around parent axis. */
+export const GOLDEN_ANGLE = Math.PI * (3 - Math.sqrt(5));
+
+/** Wrap angle into [0, 2π). */
+export function wrapAzimuth(a: number): number {
+  const twoPi = Math.PI * 2;
+  let t = a % twoPi;
+  if (t < 0) t += twoPi;
+  return t;
+}
+
+/** Smallest angular distance between two azimuths (radians, in [0, π]). */
+export function azimuthSeparation(a: number, b: number): number {
+  let d = Math.abs(wrapAzimuth(a) - wrapAzimuth(b));
+  if (d > Math.PI) d = Math.PI * 2 - d;
+  return d;
+}
+
+/**
+ * Recover approximate yaw azimuth from a lateral child's local orientation.
+ * Parent local +Y is the parent axis; laterals are yaw×pitch of that axis.
+ */
+export function azimuthFromOrientation(orient: Quat): number {
+  const dir = quatRotateVec3(orient, vec3(0, 1, 0));
+  return Math.atan2(dir[0], dir[2]);
+}
+
+/** Off-axis angle of a child orientation from the parent local axis (radians). */
+function offAxisAngle(orient: Quat): number {
+  const dir = quatRotateVec3(orient, vec3(0, 1, 0));
+  return Math.acos(clamp(dir[1], -1, 1));
+}
+
+/**
+ * Azimuths already claimed by axillary buds or lateral children on a node.
+ * Terminal-like children (near parent axis) are ignored.
+ * Pass `excludeBudId` when re-resolving the bud about to flush (avoid self-hit).
+ */
+export function collectOccupiedAzimuths(
+  tree: TreeState,
+  node: Internode,
+  excludeBudId?: string,
+): number[] {
+  const az: number[] = [];
+  for (const bud of node.buds) {
+    if (excludeBudId && bud.id === excludeBudId) continue;
+    if (bud.type === 'axillary' && bud.state !== 'dead') {
+      az.push(bud.azimuth);
+    }
+  }
+  for (const childId of node.children) {
+    const child = tree.nodes[childId];
+    if (!child?.living) continue;
+    if (offAxisAngle(child.orientation) > 0.25) {
+      az.push(azimuthFromOrientation(child.orientation));
+    }
+  }
+  return az;
+}
+
+/** Midpoint of the largest unoccupied azimuth gap (open sector preference). */
+export function openSectorAzimuth(occupied: number[], rng: () => number): number {
+  if (occupied.length === 0) return rng() * Math.PI * 2;
+  const sorted = occupied.map(wrapAzimuth).sort((a, b) => a - b);
+  let bestGap = -1;
+  let bestMid = sorted[0];
+  for (let i = 0; i < sorted.length; i++) {
+    const a = sorted[i];
+    const b =
+      i + 1 < sorted.length ? sorted[i + 1] : sorted[0] + Math.PI * 2;
+    const gap = b - a;
+    if (gap > bestGap) {
+      bestGap = gap;
+      bestMid = wrapAzimuth(a + gap * 0.5);
+    }
+  }
+  return bestMid;
+}
+
+function minSeparationFromOccupied(candidate: number, occupied: number[]): number {
+  if (occupied.length === 0) return Math.PI;
+  let minSep = Math.PI;
+  for (const o of occupied) {
+    minSep = Math.min(minSep, azimuthSeparation(candidate, o));
+  }
+  return minSep;
+}
+
+function phyllotaxisAzimuth(
+  mode: SpeciesDefinition['phyllotaxis'],
+  index: number,
+  base: number,
+): number {
+  if (mode === 'opposite') {
+    return wrapAzimuth(base + index * Math.PI);
+  }
+  if (mode === 'golden') {
+    return wrapAzimuth(base + index * GOLDEN_ANGLE);
+  }
+  return wrapAzimuth(base);
+}
+
+/**
+ * Soft free-space probe: short ray along proposed lateral world direction.
+ * Returns true when clear of other living segments (excluding parent + its kids).
+ * O(nodes) per call; only invoked on rare axillary spawn / lateral flush with
+ * a small retry budget — not every growth day for every node.
+ */
+function freeSpaceClear(
+  tree: TreeState,
+  parentId: NodeId,
+  azimuth: number,
+  pitch: number,
+  probeRadius: number,
+): boolean {
+  if (probeRadius <= 0) return true;
+
+  const frames = computeWorldFrames(tree);
+  const parentFrame = frames.get(parentId);
+  if (!parentFrame) return true;
+
+  const yaw = quatFromAxisAngle(vec3(0, 1, 0), azimuth);
+  const pitchQ = quatFromAxisAngle(vec3(1, 0, 0), pitch);
+  const localOrient = quatMultiply(yaw, pitchQ);
+  const worldOrient = quatMultiply(parentFrame.worldOrientation, localOrient);
+  const dir = quatRotateVec3(worldOrient, vec3(0, 1, 0));
+  const origin = parentFrame.tip;
+  // Probe length ~ short internode; check a few samples along the ray
+  const probeLen = Math.max(0.02, probeRadius * 4);
+  const samples = 3;
+  const skip = new Set<NodeId>([parentId]);
+  const parent = tree.nodes[parentId];
+  if (parent) {
+    for (const c of parent.children) skip.add(c);
+    if (parent.parentId) skip.add(parent.parentId);
+  }
+
+  for (const [id, frame] of frames) {
+    if (skip.has(id)) continue;
+    const node = tree.nodes[id];
+    if (!node?.living) continue;
+    // Cheap reject: far bounding sphere
+    const mid: Vec3 = [
+      (frame.base[0] + frame.tip[0]) * 0.5,
+      (frame.base[1] + frame.tip[1]) * 0.5,
+      (frame.base[2] + frame.tip[2]) * 0.5,
+    ];
+    const dx = mid[0] - origin[0];
+    const dy = mid[1] - origin[1];
+    const dz = mid[2] - origin[2];
+    const far = probeLen + node.length * 0.5 + probeRadius * 2;
+    if (dx * dx + dy * dy + dz * dz > far * far) continue;
+
+    for (let s = 1; s <= samples; s++) {
+      const t = (s / samples) * probeLen;
+      const px = origin[0] + dir[0] * t;
+      const py = origin[1] + dir[1] * t;
+      const pz = origin[2] + dir[2] * t;
+      // Distance from sample point to segment (base→tip)
+      const seg = [
+        frame.tip[0] - frame.base[0],
+        frame.tip[1] - frame.base[1],
+        frame.tip[2] - frame.base[2],
+      ] as Vec3;
+      const segLen2 = seg[0] * seg[0] + seg[1] * seg[1] + seg[2] * seg[2];
+      let u = 0;
+      if (segLen2 > 1e-18) {
+        u = clamp(
+          ((px - frame.base[0]) * seg[0] +
+            (py - frame.base[1]) * seg[1] +
+            (pz - frame.base[2]) * seg[2]) /
+            segLen2,
+          0,
+          1,
+        );
+      }
+      const cx = frame.base[0] + seg[0] * u - px;
+      const cy = frame.base[1] + seg[1] * u - py;
+      const cz = frame.base[2] + seg[2] * u - pz;
+      const dist = Math.hypot(cx, cy, cz);
+      // Inflate by segment radius so thick wood blocks more
+      if (dist < probeRadius + node.radius) return false;
+    }
+  }
+  return true;
+}
+
+/**
+ * Choose a lateral azimuth that respects species minSiblingAngle, phyllotaxis,
+ * and optional free-space probes. Prefers open sectors on conflict.
+ * Pure sim — no Three.js.
+ *
+ * @param preferred  Starting azimuth (e.g. bud's stored azimuth on flush)
+ * @param excludeBudId  Bud being resolved — omitted from occupied set
+ */
+export function chooseLateralAzimuth(
+  tree: TreeState,
+  nodeId: NodeId,
+  species: SpeciesDefinition,
+  rng: () => number,
+  preferred?: number,
+  excludeBudId?: string,
+): number {
+  const node = tree.nodes[nodeId];
+  if (!node) return preferred ?? rng() * Math.PI * 2;
+
+  const occupied = collectOccupiedAzimuths(tree, node, excludeBudId);
+  const minAng = species.minSiblingAngle;
+  const retries = Math.max(0, species.branchAzimuthRetries | 0);
+  const pitch = species.branchAngle.mean;
+  const index = occupied.length;
+
+  const base =
+    preferred !== undefined
+      ? preferred
+      : occupied.length > 0
+        ? occupied[0]
+        : rng() * Math.PI * 2;
+
+  let bestAz = preferred ?? openSectorAzimuth(occupied, rng);
+  let bestScore = -1;
+
+  const tryCandidate = (cand: number): boolean => {
+    const az = wrapAzimuth(cand);
+    const sep = minSeparationFromOccupied(az, occupied);
+    // Score: separation first; free-space is a hard-ish preference
+    const clear = freeSpaceClear(
+      tree,
+      nodeId,
+      az,
+      pitch,
+      species.freeSpaceProbeRadius,
+    );
+    const score = sep + (clear ? 0.15 : 0);
+    if (score > bestScore) {
+      bestScore = score;
+      bestAz = az;
+    }
+    return sep + 1e-6 >= minAng && clear;
+  };
+
+  // Primary: phyllotactic placement (or preferred / random)
+  if (species.phyllotaxis === 'random' && preferred === undefined) {
+    if (tryCandidate(rng() * Math.PI * 2)) return bestAz;
+  } else if (preferred !== undefined) {
+    if (tryCandidate(preferred)) return bestAz;
+  } else {
+    if (tryCandidate(phyllotaxisAzimuth(species.phyllotaxis, index, base))) {
+      return bestAz;
+    }
+  }
+
+  // Resample: further phyllotactic steps, open sector, then random
+  for (let attempt = 1; attempt <= retries; attempt++) {
+    let cand: number;
+    if (attempt === 1) {
+      cand = openSectorAzimuth(occupied, rng);
+    } else if (species.phyllotaxis === 'random') {
+      cand = rng() * Math.PI * 2;
+    } else if (attempt === retries) {
+      // Last try: open sector with small jitter
+      cand = openSectorAzimuth(occupied, rng) + (rng() - 0.5) * 0.2;
+    } else {
+      cand =
+        phyllotaxisAzimuth(species.phyllotaxis, index + attempt, base) +
+        (rng() - 0.5) * 0.15;
+    }
+    if (tryCandidate(cand)) return bestAz;
+  }
+
+  // Best-effort: largest separation found (may still be < min if crowded)
+  return bestAz;
+}
 
 function allocId(tree: TreeState, prefix: string): string {
   const id = `${prefix}${tree.nextId}`;
@@ -490,12 +765,23 @@ export function extendFromBud(
       randNormal(rng, 0.05, 0.04),
     );
   } else {
+    // Re-resolve azimuth against current siblings (children + other buds)
+    // so delayed flushes still honor minSiblingAngle / free-space.
+    const azimuth = chooseLateralAzimuth(
+      tree,
+      nodeId,
+      species,
+      rng,
+      bud.azimuth,
+      bud.id,
+    );
+    bud.azimuth = azimuth;
     const angle = randNormal(
       rng,
       species.branchAngle.mean,
       species.branchAngle.std,
     );
-    const yaw = quatFromAxisAngle(vec3(0, 1, 0), bud.azimuth);
+    const yaw = quatFromAxisAngle(vec3(0, 1, 0), azimuth);
     const pitch = quatFromAxisAngle(vec3(1, 0, 0), angle);
     orient = quatMultiply(yaw, pitch);
   }
