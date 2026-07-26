@@ -4,6 +4,8 @@ import {
   createBarkNormalTexture,
   createBarkRoughnessTexture,
   createFoliageAlbedoTexture,
+  createGroundAlbedoTexture,
+  createPedestalAlbedoTexture,
   createPotAlbedoTexture,
   createSoilAlbedoTexture,
 } from './textures';
@@ -15,6 +17,8 @@ let foliageMature: THREE.CanvasTexture | null = null;
 let foliageTip: THREE.CanvasTexture | null = null;
 let soilAlbedo: THREE.CanvasTexture | null = null;
 let potAlbedo: THREE.CanvasTexture | null = null;
+let groundAlbedo: THREE.CanvasTexture | null = null;
+let pedestalAlbedo: THREE.CanvasTexture | null = null;
 
 function barkMaps() {
   if (!barkAlbedo) {
@@ -111,11 +115,12 @@ export function createFoliageTipMaterial(): THREE.MeshStandardMaterial {
 
 export function createPotMaterial(): THREE.MeshStandardMaterial {
   if (!potAlbedo) potAlbedo = createPotAlbedoTexture();
+  // Physical-leaning standard: responds better under IBL until ceramic PR
   return new THREE.MeshStandardMaterial({
     map: potAlbedo,
-    color: new THREE.Color('#d4a090'),
-    roughness: 0.55,
-    metalness: 0.08,
+    color: new THREE.Color('#c4a090'),
+    roughness: 0.48,
+    metalness: 0.04,
   });
 }
 
@@ -126,7 +131,7 @@ export function createSoilMaterial(): THREE.MeshStandardMaterial {
   }
   return new THREE.MeshStandardMaterial({
     map: soilAlbedo,
-    color: new THREE.Color('#b8a890'),
+    color: new THREE.Color('#a89880'),
     roughness: 0.98,
     metalness: 0,
   });
@@ -149,10 +154,30 @@ export function createHighlightMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
+/** Seamless product-studio floor — pale warm stone/linen. */
 export function createGroundMaterial(): THREE.MeshStandardMaterial {
+  if (!groundAlbedo) {
+    groundAlbedo = createGroundAlbedoTexture();
+    groundAlbedo.repeat.set(6, 6);
+  }
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#1a241c'),
-    roughness: 1,
+    map: groundAlbedo,
+    color: new THREE.Color('#e4dfd6'),
+    roughness: 0.92,
     metalness: 0,
+  });
+}
+
+/** Short stone pedestal under the pot. */
+export function createPedestalMaterial(): THREE.MeshStandardMaterial {
+  if (!pedestalAlbedo) {
+    pedestalAlbedo = createPedestalAlbedoTexture();
+    pedestalAlbedo.repeat.set(2, 1);
+  }
+  return new THREE.MeshStandardMaterial({
+    map: pedestalAlbedo,
+    color: new THREE.Color('#d0cbc2'),
+    roughness: 0.78,
+    metalness: 0.02,
   });
 }

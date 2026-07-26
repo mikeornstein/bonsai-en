@@ -1,9 +1,13 @@
 import * as THREE from 'three';
 import {
   createGroundMaterial,
+  createPedestalMaterial,
   createPotMaterial,
   createSoilMaterial,
 } from './materials';
+
+/** Height of the stone pedestal; pot + tree sit on top via scene stage. */
+export const PEDESTAL_HEIGHT = 0.032;
 
 export function createPotGroup(): THREE.Group {
   const group = new THREE.Group();
@@ -77,8 +81,72 @@ export function createPotGroup(): THREE.Group {
   return group;
 }
 
+/**
+ * Seamless pale studio floor + short stone pedestal.
+ * Pot/tree are raised by PEDESTAL_HEIGHT in the scene stage.
+ */
+export function createStudioBase(): THREE.Group {
+  const group = new THREE.Group();
+  group.name = 'studioBase';
+
+  const groundMat = createGroundMaterial();
+  const pedestalMat = createPedestalMaterial();
+
+  // Large seamless ground (product cyclorama floor)
+  const ground = new THREE.Mesh(
+    new THREE.CircleGeometry(2.4, 96),
+    groundMat,
+  );
+  ground.rotation.x = -Math.PI / 2;
+  ground.position.y = 0;
+  ground.receiveShadow = true;
+  ground.name = 'ground';
+  group.add(ground);
+
+  // Soft shadow catcher ring under pedestal (slightly darker, same plane)
+  const catcher = new THREE.Mesh(
+    new THREE.RingGeometry(0.1, 0.22, 64),
+    new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#b8b2a8'),
+      roughness: 1,
+      metalness: 0,
+      transparent: true,
+      opacity: 0.35,
+      depthWrite: false,
+    }),
+  );
+  catcher.rotation.x = -Math.PI / 2;
+  catcher.position.y = 0.0004;
+  catcher.receiveShadow = true;
+  group.add(catcher);
+
+  // Short cylindrical stone pedestal with slight bevel via two stacked discs
+  const pedH = PEDESTAL_HEIGHT;
+  const ped = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.118, 0.125, pedH, 64, 1, false),
+    pedestalMat,
+  );
+  ped.position.y = pedH * 0.5;
+  ped.castShadow = true;
+  ped.receiveShadow = true;
+  group.add(ped);
+
+  // Thin top cap for a refined edge read
+  const cap = new THREE.Mesh(
+    new THREE.CylinderGeometry(0.116, 0.118, 0.004, 64, 1, false),
+    pedestalMat,
+  );
+  cap.position.y = pedH - 0.001;
+  cap.castShadow = true;
+  cap.receiveShadow = true;
+  group.add(cap);
+
+  return group;
+}
+
+/** @deprecated Prefer createStudioBase — kept for any external callers. */
 export function createGround(): THREE.Mesh {
-  const geo = new THREE.CircleGeometry(1.8, 64);
+  const geo = new THREE.CircleGeometry(2.4, 96);
   const mat = createGroundMaterial();
   const mesh = new THREE.Mesh(geo, mat);
   mesh.rotation.x = -Math.PI / 2;

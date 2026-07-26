@@ -272,18 +272,91 @@ export function createPotAlbedoTexture(): THREE.CanvasTexture {
   );
 }
 
-/** Soft studio gradient for scene background. */
+/**
+ * Light product-studio cyclorama — warm linen sky falling to cool stone floor.
+ * Used as scene.background (equirect-ish vertical gradient via low-res map).
+ */
 export function createStudioBackgroundTexture(): THREE.CanvasTexture {
   return canvasTexture(
-    4,
+    8,
     (ctx, size) => {
       const g = ctx.createLinearGradient(0, 0, 0, size);
-      g.addColorStop(0, '#1a2c22');
-      g.addColorStop(0.45, '#121c16');
-      g.addColorStop(1, '#0a100c');
+      // Top: soft cool daylight
+      g.addColorStop(0, '#eef1f4');
+      // Mid: warm linen / paper
+      g.addColorStop(0.42, '#e6e1d8');
+      // Lower: soft stone gray
+      g.addColorStop(0.78, '#d4cfc6');
+      g.addColorStop(1, '#c4bfb6');
       ctx.fillStyle = g;
       ctx.fillRect(0, 0, size, size);
     },
     { wrap: THREE.ClampToEdgeWrapping, colorSpace: THREE.SRGBColorSpace },
+  );
+}
+
+/** Subtle seamless floor texture — warm concrete / linen grain. */
+export function createGroundAlbedoTexture(): THREE.CanvasTexture {
+  return canvasTexture(
+    256,
+    (ctx, size) => {
+      const img = ctx.createImageData(size, size);
+      const d = img.data;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size;
+          const v = y / size;
+          const n = fbm(u * 8, v * 8, 4);
+          const fine = fbm(u * 32, v * 32, 2);
+          // Pale warm stone
+          const base = 210 + n * 18 + fine * 8;
+          const r = base + 4;
+          const g = base;
+          const b = base - 8;
+          const i = (y * size + x) * 4;
+          d[i] = Math.min(255, r);
+          d[i + 1] = Math.min(255, g);
+          d[i + 2] = Math.min(255, Math.max(0, b));
+          d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    },
+    { colorSpace: THREE.SRGBColorSpace },
+  );
+}
+
+/** Stone pedestal albedo — slightly cooler / denser than floor. */
+export function createPedestalAlbedoTexture(): THREE.CanvasTexture {
+  return canvasTexture(
+    256,
+    (ctx, size) => {
+      const img = ctx.createImageData(size, size);
+      const d = img.data;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size;
+          const v = y / size;
+          const n = fbm(u * 10, v * 6, 4);
+          const vein = fbm(u * 3, v * 14, 2);
+          let r = 185 + n * 28;
+          let g = 180 + n * 24;
+          let b = 170 + n * 20;
+          // Soft mineral veins
+          if (vein > 0.62) {
+            r -= 12;
+            g -= 10;
+            b -= 6;
+          }
+          const i = (y * size + x) * 4;
+          d[i] = Math.min(255, r);
+          d[i + 1] = Math.min(255, g);
+          d[i + 2] = Math.min(255, b);
+          d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    },
+    { colorSpace: THREE.SRGBColorSpace },
   );
 }
