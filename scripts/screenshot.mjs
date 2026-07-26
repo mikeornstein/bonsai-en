@@ -13,6 +13,7 @@ fs.mkdirSync(dir, { recursive: true });
 
 const browser = await puppeteer.launch({
   headless: true,
+  protocolTimeout: 180000,
   args: [
     '--use-gl=angle',
     '--use-angle=swiftshader',
@@ -29,16 +30,22 @@ async function freshPage(width, height) {
   page.on('dialog', async (d) => {
     await d.accept();
   });
+  // Avoid networkidle0 — WebGL/HMR can keep the network "busy" forever.
   await page.goto('http://localhost:5173/', {
-    waitUntil: 'networkidle0',
-    timeout: 30000,
+    waitUntil: 'domcontentloaded',
+    timeout: 60000,
   });
+  await page.waitForSelector('#btn-new', { timeout: 30000 });
+  // Give the main thread time to finish procedural textures + PMREM
+  await new Promise((r) => setTimeout(r, 4000));
   await page.evaluate(() => {
     localStorage.clear();
   });
-  await page.reload({ waitUntil: 'networkidle0' });
+  await page.reload({ waitUntil: 'domcontentloaded', timeout: 60000 });
+  await page.waitForSelector('#btn-new', { timeout: 30000 });
+  await new Promise((r) => setTimeout(r, 4000));
   await page.click('#btn-new');
-  await new Promise((r) => setTimeout(r, 1000));
+  await new Promise((r) => setTimeout(r, 2500));
   return page;
 }
 

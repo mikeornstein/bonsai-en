@@ -50,7 +50,7 @@ function canvasTexture(
   return tex;
 }
 
-/** Vertical bark grain albedo (sRGB). */
+/** Vertical bark grain albedo — juniper plates, fissures, lichen (sRGB). */
 export function createBarkAlbedoTexture(): THREE.CanvasTexture {
   return canvasTexture(
     512,
@@ -61,29 +61,31 @@ export function createBarkAlbedoTexture(): THREE.CanvasTexture {
         for (let x = 0; x < size; x++) {
           const u = x / size;
           const v = y / size;
-          // Strong vertical grain + plate cracks
-          const grain = fbm(u * 6, v * 28, 5);
-          const plate = fbm(u * 3.5, v * 2.2, 3);
-          const crack =
-            Math.abs(Math.sin(u * Math.PI * 8 + plate * 4)) < 0.06
-              ? 0.25
-              : 0;
-          const ridge = fbm(u * 18, v * 4, 2);
+          const grain = fbm(u * 7, v * 36, 4);
+          const plate = fbm(u * 4.2, v * 2.5, 3);
+          const micro = fbm(u * 28, v * 10, 2);
+          const crackWave = Math.sin(u * Math.PI * 10 + plate * 5 + grain);
+          const crack = Math.abs(crackWave) < 0.055 ? 0.35 : 0;
+          const ridge = fbm(u * 18, v * 5, 2);
 
-          let r = 92 + grain * 55 + ridge * 20;
-          let g = 58 + grain * 30 + ridge * 10;
-          let b = 38 + grain * 18;
+          let r = 78 + grain * 48 + ridge * 18 + micro * 10;
+          let g = 52 + grain * 28 + ridge * 10 + micro * 6;
+          let b = 36 + grain * 16 + ridge * 6 + micro * 4;
 
-          // Darker fissures
-          r -= crack * 50 + (1 - plate) * 18;
-          g -= crack * 35 + (1 - plate) * 12;
-          b -= crack * 25 + (1 - plate) * 8;
+          r -= crack * 55 + (1 - plate) * 22;
+          g -= crack * 40 + (1 - plate) * 16;
+          b -= crack * 28 + (1 - plate) * 12;
 
-          // Occasional lichen hint
-          if (fbm(u * 20, v * 20, 2) > 0.72) {
-            r = r * 0.75 + 40;
-            g = g * 0.7 + 55;
-            b = b * 0.7 + 30;
+          if (plate > 0.62 && crack < 0.1) {
+            r += 14;
+            g += 8;
+            b += 4;
+          }
+
+          if (fbm(u * 18, v * 18, 2) > 0.74) {
+            r = r * 0.72 + 48;
+            g = g * 0.68 + 62;
+            b = b * 0.68 + 36;
           }
 
           const i = (y * size + x) * 4;
@@ -107,18 +109,19 @@ export function createBarkNormalTexture(): THREE.CanvasTexture {
     for (let x = 0; x < size; x++) {
       const u = x / size;
       const v = y / size;
-      const grain = fbm(u * 6, v * 28, 5);
-      const plate = fbm(u * 3.5, v * 2.2, 3);
-      const crack =
-        Math.abs(Math.sin(u * Math.PI * 8 + plate * 4)) < 0.06 ? 0.4 : 0;
-      height[y * size + x] = grain * 0.7 + plate * 0.25 - crack;
+      const grain = fbm(u * 7, v * 36, 4);
+      const plate = fbm(u * 4.2, v * 2.5, 3);
+      const crackWave = Math.sin(u * Math.PI * 10 + plate * 5 + grain);
+      const crack = Math.abs(crackWave) < 0.055 ? 0.5 : 0;
+      const micro = fbm(u * 28, v * 10, 2);
+      height[y * size + x] = grain * 0.65 + plate * 0.28 + micro * 0.12 - crack;
     }
   }
 
   return canvasTexture(size, (ctx, s) => {
     const img = ctx.createImageData(s, s);
     const d = img.data;
-    const strength = 2.8;
+    const strength = 3.4;
     for (let y = 0; y < s; y++) {
       for (let x = 0; x < s; x++) {
         const xl = height[y * s + ((x - 1 + s) % s)];
@@ -151,9 +154,10 @@ export function createBarkRoughnessTexture(): THREE.CanvasTexture {
       for (let x = 0; x < size; x++) {
         const u = x / size;
         const v = y / size;
-        const g = fbm(u * 8, v * 20, 3);
-        const r = 0.55 + g * 0.4;
-        const c = Math.floor(r * 255);
+        const g = fbm(u * 8, v * 22, 3);
+        const plate = fbm(u * 4, v * 2.5, 2);
+        const r = 0.62 + g * 0.32 - plate * 0.08;
+        const c = Math.floor(Math.min(1, Math.max(0, r)) * 255);
         const i = (y * size + x) * 4;
         d[i] = d[i + 1] = d[i + 2] = c;
         d[i + 3] = 255;
@@ -163,7 +167,10 @@ export function createBarkRoughnessTexture(): THREE.CanvasTexture {
   });
 }
 
-/** Soft scale foliage albedo with edge darkening. */
+/**
+ * Soft juniper scale albedo with edge alpha.
+ * Higher res for close-up photoreal pads.
+ */
 export function createFoliageAlbedoTexture(
   base: [number, number, number],
 ): THREE.CanvasTexture {
@@ -174,22 +181,23 @@ export function createFoliageAlbedoTexture(
       const img = ctx.createImageData(size, size);
       const d = img.data;
       const cx = size * 0.5;
-      const cy = size * 0.52;
+      const cy = size * 0.55;
       for (let y = 0; y < size; y++) {
         for (let x = 0; x < size; x++) {
-          // Soft elliptical scale (juniper-ish), not sharp diamond
-          const nx = (x - cx) / (size * 0.38);
-          const ny = (y - cy) / (size * 0.46);
-          const r2 = nx * nx + ny * ny;
+          const nx = (x - cx) / (size * 0.36);
+          const ny = (y - cy) / (size * 0.48);
+          const taper = 1 + Math.max(0, -ny) * 0.45;
+          const r2 = nx * nx * taper + ny * ny;
           const edge = Math.max(0, 1 - r2);
-          const alpha = edge > 0.02 ? Math.min(1, edge * 1.65) : 0;
-          const vein = 1 - Math.abs(nx) * 0.25;
-          const n = fbm(x * 0.09, y * 0.09, 2);
+          const alpha =
+            edge > 0.015 ? Math.min(1, Math.pow(edge, 0.55) * 1.35) : 0;
+          const vein = 1 - Math.abs(nx) * 0.35;
+          const n = fbm(x * 0.08, y * 0.08, 2);
+          const mid = 1 + (1 - Math.abs(nx) * 2.2) * 0.08 * Math.max(0, edge);
           const i = (y * size + x) * 4;
-          // Keep green RGB even when alpha=0 to avoid black edge fringing
-          d[i] = Math.min(255, br * vein * (0.88 + n * 0.18));
-          d[i + 1] = Math.min(255, bg * vein * (0.88 + n * 0.22));
-          d[i + 2] = Math.min(255, bb * vein * (0.88 + n * 0.14));
+          d[i] = Math.min(255, br * vein * mid * (0.86 + n * 0.2));
+          d[i + 1] = Math.min(255, bg * vein * mid * (0.86 + n * 0.24));
+          d[i + 2] = Math.min(255, bb * vein * mid * (0.86 + n * 0.16));
           d[i + 3] = Math.floor(alpha * 255);
         }
       }
@@ -199,6 +207,7 @@ export function createFoliageAlbedoTexture(
   );
 }
 
+/** Akadama / pumice mix — cooler gray-brown grit field. */
 export function createSoilAlbedoTexture(): THREE.CanvasTexture {
   return canvasTexture(
     256,
@@ -209,56 +218,43 @@ export function createSoilAlbedoTexture(): THREE.CanvasTexture {
         for (let x = 0; x < size; x++) {
           const u = x / size;
           const v = y / size;
-          const n = fbm(u * 14, v * 14, 4);
-          const pebble = fbm(u * 40, v * 40, 2);
+          const n = fbm(u * 16, v * 16, 5);
+          const pebble = fbm(u * 48, v * 48, 3);
+          const grain = fbm(u * 90, v * 90, 2);
           // Cooler gray-brown akadama / pumice mix
-          let r = 72 + n * 38;
-          let g = 58 + n * 28;
-          let b = 42 + n * 18;
-          if (pebble > 0.66) {
-            r += 30;
-            g += 24;
-            b += 16;
+          let r = 78 + n * 42 + grain * 12;
+          let g = 64 + n * 32 + grain * 10;
+          let b = 48 + n * 22 + grain * 8;
+          if (pebble > 0.62) {
+            // Warm clay granules
+            r += 36;
+            g += 26;
+            b += 14;
           }
-          // grit flecks
-          if (hash2(x * 0.3, y * 0.3) > 0.91) {
-            r = 140;
-            g = 105;
-            b = 70;
+          if (pebble > 0.78) {
+            // Lighter pumice chips
+            r = 155 + n * 20;
+            g = 140 + n * 18;
+            b = 120 + n * 14;
           }
-          if (hash2(x * 0.7, y * 0.5) > 0.94) {
-            r = 90;
-            g = 88;
-            b = 82;
+          // Dark basalt grit flecks
+          if (hash2(x * 0.31, y * 0.29) > 0.93) {
+            r = 55;
+            g = 52;
+            b = 48;
           }
-          const i = (y * size + x) * 4;
-          d[i] = r;
-          d[i + 1] = g;
-          d[i + 2] = b;
-          d[i + 3] = 255;
-        }
-      }
-      ctx.putImageData(img, 0, 0);
-    },
-    { colorSpace: THREE.SRGBColorSpace },
-  );
-}
-
-export function createPotAlbedoTexture(): THREE.CanvasTexture {
-  return canvasTexture(
-    256,
-    (ctx, size) => {
-      const img = ctx.createImageData(size, size);
-      const d = img.data;
-      for (let y = 0; y < size; y++) {
-        for (let x = 0; x < size; x++) {
-          const u = x / size;
-          const v = y / size;
-          const n = fbm(u * 6, v * 8, 3);
-          const glaze = 0.85 + n * 0.2;
-          const r = (110 + n * 25) * glaze;
-          const g = (55 + n * 15) * glaze;
-          const b = (42 + n * 10) * glaze;
+          // Pale quartz flecks
+          if (hash2(x * 0.71, y * 0.53) > 0.955) {
+            r = 175;
+            g = 168;
+            b = 155;
+          }
+          // Tiny moss hint (rare)
+          if (hash2(x * 0.19, y * 0.41) > 0.978) {
+            r = r * 0.55 + 40;
+            g = g * 0.5 + 70;
+            b = b * 0.55 + 28;
+          }
           const i = (y * size + x) * 4;
           d[i] = Math.min(255, r);
           d[i + 1] = Math.min(255, g);
@@ -270,6 +266,158 @@ export function createPotAlbedoTexture(): THREE.CanvasTexture {
     },
     { colorSpace: THREE.SRGBColorSpace },
   );
+}
+
+/** Height-derived normal for soil grit (tangent space). */
+export function createSoilNormalTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const height = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const n = fbm(u * 16, v * 16, 4);
+      const pebble = fbm(u * 48, v * 48, 3);
+      height[y * size + x] = n * 0.55 + pebble * 0.45;
+    }
+  }
+  return canvasTexture(size, (ctx, s) => {
+    const img = ctx.createImageData(s, s);
+    const d = img.data;
+    const strength = 3.4;
+    for (let y = 0; y < s; y++) {
+      for (let x = 0; x < s; x++) {
+        const xl = height[y * s + ((x - 1 + s) % s)];
+        const xr = height[y * s + ((x + 1) % s)];
+        const yu = height[((y - 1 + s) % s) * s + x];
+        const yd = height[((y + 1) % s) * s + x];
+        let nx = (xl - xr) * strength;
+        let ny = (yu - yd) * strength;
+        let nz = 1;
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+        const i = (y * s + x) * 4;
+        d[i] = (nx * 0.5 + 0.5) * 255;
+        d[i + 1] = (ny * 0.5 + 0.5) * 255;
+        d[i + 2] = (nz * 0.5 + 0.5) * 255;
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  });
+}
+
+/**
+ * Soft matte-to-semi-glaze ceramic albedo.
+ * Warm unglazed clay body with subtle kiln variation (not plastic red).
+ */
+export function createPotAlbedoTexture(): THREE.CanvasTexture {
+  return canvasTexture(
+    256,
+    (ctx, size) => {
+      const img = ctx.createImageData(size, size);
+      const d = img.data;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const u = x / size;
+          const v = y / size;
+          const n = fbm(u * 5, v * 7, 4);
+          const fine = fbm(u * 40, v * 40, 2);
+          const kiln = fbm(u * 2.2, v * 3.1, 3);
+          // Muted iron-oxide ceramic — warm brown-gray
+          let r = 118 + n * 28 + fine * 8 + kiln * 12;
+          let g = 78 + n * 18 + fine * 5 + kiln * 6;
+          let b = 58 + n * 12 + fine * 4 + kiln * 4;
+          // Soft vertical throwing marks
+          const throwMark = Math.sin(v * Math.PI * 22 + n * 2) * 0.5 + 0.5;
+          r -= throwMark * 6;
+          g -= throwMark * 4;
+          b -= throwMark * 3;
+          // Slight rim darkening (v near top/bottom of UV cylinder)
+          const edge = Math.pow(Math.abs(v - 0.5) * 2, 2);
+          r -= edge * 10;
+          g -= edge * 8;
+          b -= edge * 6;
+          const i = (y * size + x) * 4;
+          d[i] = Math.min(255, Math.max(0, r));
+          d[i + 1] = Math.min(255, Math.max(0, g));
+          d[i + 2] = Math.min(255, Math.max(0, b));
+          d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    },
+    { colorSpace: THREE.SRGBColorSpace },
+  );
+}
+
+/** Ceramic roughness — glossier mid-body, matte near foot/rim. */
+export function createPotRoughnessTexture(): THREE.CanvasTexture {
+  return canvasTexture(256, (ctx, size) => {
+    const img = ctx.createImageData(size, size);
+    const d = img.data;
+    for (let y = 0; y < size; y++) {
+      for (let x = 0; x < size; x++) {
+        const u = x / size;
+        const v = y / size;
+        const n = fbm(u * 8, v * 10, 3);
+        // Soft semi-glaze: mid roughness with micro variation
+        let r = 0.42 + n * 0.22;
+        // Foot / rim slightly more matte
+        const edge = Math.pow(Math.abs(v - 0.5) * 2, 1.6);
+        r += edge * 0.18;
+        const c = Math.floor(Math.min(1, Math.max(0, r)) * 255);
+        const i = (y * size + x) * 4;
+        d[i] = d[i + 1] = d[i + 2] = c;
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  });
+}
+
+/** Subtle ceramic surface normal (throwing + kiln pits). */
+export function createPotNormalTexture(): THREE.CanvasTexture {
+  const size = 256;
+  const height = new Float32Array(size * size);
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      const u = x / size;
+      const v = y / size;
+      const throwMark = Math.sin(v * Math.PI * 22) * 0.08;
+      const n = fbm(u * 12, v * 16, 3) * 0.25;
+      const pits = fbm(u * 50, v * 50, 2) > 0.72 ? 0.12 : 0;
+      height[y * size + x] = throwMark + n - pits;
+    }
+  }
+  return canvasTexture(size, (ctx, s) => {
+    const img = ctx.createImageData(s, s);
+    const d = img.data;
+    const strength = 1.6;
+    for (let y = 0; y < s; y++) {
+      for (let x = 0; x < s; x++) {
+        const xl = height[y * s + ((x - 1 + s) % s)];
+        const xr = height[y * s + ((x + 1) % s)];
+        const yu = height[((y - 1 + s) % s) * s + x];
+        const yd = height[((y + 1) % s) * s + x];
+        let nx = (xl - xr) * strength;
+        let ny = (yu - yd) * strength;
+        let nz = 1;
+        const len = Math.hypot(nx, ny, nz) || 1;
+        nx /= len;
+        ny /= len;
+        nz /= len;
+        const i = (y * s + x) * 4;
+        d[i] = (nx * 0.5 + 0.5) * 255;
+        d[i + 1] = (ny * 0.5 + 0.5) * 255;
+        d[i + 2] = (nz * 0.5 + 0.5) * 255;
+        d[i + 3] = 255;
+      }
+    }
+    ctx.putImageData(img, 0, 0);
+  });
 }
 
 /**
@@ -292,6 +440,53 @@ export function createStudioBackgroundTexture(): THREE.CanvasTexture {
       ctx.fillRect(0, 0, size, size);
     },
     { wrap: THREE.ClampToEdgeWrapping, colorSpace: THREE.SRGBColorSpace },
+  );
+}
+
+/**
+ * Soft studio equirect for PMREM IBL — bright key, cool fill, warm floor bounce.
+ * Low-res by design; fromEquirectangular is far cheaper than RoomEnvironment.
+ */
+export function createStudioEnvEquirectTexture(): THREE.CanvasTexture {
+  return canvasTexture(
+    256,
+    (ctx, size) => {
+      const img = ctx.createImageData(size, size);
+      const d = img.data;
+      for (let y = 0; y < size; y++) {
+        for (let x = 0; x < size; x++) {
+          const v = y / size; // 0 top = +Y
+          const u = x / size;
+          // Soft key light in upper-right of environment
+          const lx = (u - 0.62) * 2.2;
+          const ly = (v - 0.22) * 2.4;
+          const key = Math.exp(-(lx * lx + ly * ly) * 2.8);
+          // Cool zenith, warm floor
+          let r = 210 + (1 - v) * 30;
+          let g = 208 + (1 - v) * 28;
+          let b = 205 + (1 - v) * 35;
+          r = r * (0.55 + v * 0.2) + key * 180;
+          g = g * (0.55 + v * 0.2) + key * 165;
+          b = b * (0.55 + v * 0.2) + key * 140;
+          // Soft fill on opposite side
+          const fill =
+            Math.exp(-(((u - 0.15) * 3) ** 2) - (((v - 0.4) * 2) ** 2)) * 40;
+          r += fill * 0.7;
+          g += fill * 0.85;
+          b += fill;
+          const i = (y * size + x) * 4;
+          d[i] = Math.min(255, r);
+          d[i + 1] = Math.min(255, g);
+          d[i + 2] = Math.min(255, b);
+          d[i + 3] = 255;
+        }
+      }
+      ctx.putImageData(img, 0, 0);
+    },
+    {
+      wrap: THREE.ClampToEdgeWrapping,
+      colorSpace: THREE.SRGBColorSpace,
+    },
   );
 }
 

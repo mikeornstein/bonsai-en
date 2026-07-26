@@ -1,22 +1,24 @@
 :root {
   color-scheme: light;
-  /* Interim light product-studio palette (full zen HUD polish in later PR) */
+  /* Zen product-studio HUD — quiet glass, tree is the hero */
   --bg: #e6e1d8;
-  --panel: rgba(255, 255, 255, 0.55);
-  --panel-border: rgba(80, 72, 60, 0.12);
-  --text: #2a2824;
-  --muted: #6a6560;
-  --accent: #5a7a52;
-  --accent-dim: #3d5a38;
-  --danger: #b05048;
-  --wire: #a88840;
-  --radius: 14px;
-  --shadow: 0 8px 28px rgba(40, 36, 28, 0.1);
+  --panel: rgba(255, 255, 255, 0.48);
+  --panel-border: rgba(60, 52, 42, 0.1);
+  --text: #2c2a26;
+  --muted: #6e6962;
+  --accent: #5a7354;
+  --accent-dim: #3f5640;
+  --danger: #a84e46;
+  --wire: #9a8660;
+  --radius: 16px;
+  --shadow: 0 10px 36px rgba(40, 34, 26, 0.08);
   font-family:
     'Segoe UI',
     system-ui,
     -apple-system,
+    'Helvetica Neue',
     sans-serif;
+  font-feature-settings: 'kern' 1, 'liga' 1;
 }
 
 * {
@@ -54,7 +56,7 @@ body {
   display: flex;
   flex-direction: column;
   justify-content: space-between;
-  padding: 12px;
+  padding: 14px;
   gap: 10px;
 }
 
@@ -65,49 +67,54 @@ body {
 
 .hud-header h1 {
   margin: 0;
-  font-size: 1.15rem;
-  font-weight: 600;
-  letter-spacing: 0.04em;
+  font-size: 1.05rem;
+  font-weight: 500;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
   color: var(--text);
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.4);
+  opacity: 0.88;
 }
 
 .status {
-  margin: 4px 0 0;
+  margin: 6px 0 0;
   color: var(--muted);
-  font-size: 0.85rem;
+  font-size: 0.8rem;
+  font-weight: 400;
+  letter-spacing: 0.02em;
 }
 
 .panel {
   pointer-events: auto;
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  gap: 5px;
   background: var(--panel);
   border: 1px solid var(--panel-border);
   border-radius: var(--radius);
-  padding: 8px;
+  padding: 7px;
   box-shadow: var(--shadow);
-  backdrop-filter: blur(14px) saturate(1.1);
-  -webkit-backdrop-filter: blur(14px) saturate(1.1);
+  backdrop-filter: blur(18px) saturate(1.15);
+  -webkit-backdrop-filter: blur(18px) saturate(1.15);
   width: fit-content;
   max-width: min(100%, 520px);
 }
 
 .panel.meta {
   position: absolute;
-  top: 12px;
-  right: 12px;
-  width: min(220px, calc(100% - 24px));
+  top: 14px;
+  right: 14px;
+  width: min(200px, calc(100% - 28px));
   flex-direction: column;
-  font-size: 0.82rem;
-  line-height: 1.45;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  letter-spacing: 0.01em;
 }
 
 .panel.meta .label {
   color: var(--muted);
   display: inline-block;
-  min-width: 72px;
+  min-width: 68px;
+  font-weight: 400;
 }
 
 .panel.meta .selection {
@@ -115,7 +122,7 @@ body {
   padding-top: 6px;
   border-top: 1px solid var(--panel-border);
   color: var(--accent);
-  font-size: 0.8rem;
+  font-size: 0.76rem;
 }
 
 .panel.tools,
@@ -131,22 +138,25 @@ body {
 button {
   appearance: none;
   border: 1px solid transparent;
-  background: rgba(40, 36, 28, 0.05);
+  background: rgba(40, 34, 26, 0.04);
   color: var(--text);
-  border-radius: 10px;
-  padding: 8px 12px;
+  border-radius: 11px;
+  padding: 7px 11px;
   font: inherit;
-  font-size: 0.82rem;
+  font-size: 0.8rem;
+  font-weight: 450;
+  letter-spacing: 0.01em;
   cursor: pointer;
-  min-height: 36px;
+  min-height: 34px;
   transition:
     background 0.15s ease,
     border-color 0.15s ease,
-    color 0.15s ease;
+    color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 button:hover {
-  background: rgba(40, 36, 28, 0.1);
+  background: rgba(40, 34, 26, 0.08);
 }
 
 button:active {
@@ -156,43 +166,46 @@ button:active {
 button.tool.active,
 button.speed.active {
   background: var(--accent-dim);
-  border-color: var(--accent);
-  color: #fff;
+  border-color: transparent;
+  color: #f5f2ec;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset;
 }
 
 button[data-tool='wire'].active {
   border-color: var(--wire);
-  background: rgba(168, 136, 64, 0.22);
+  background: rgba(154, 134, 96, 0.2);
   color: var(--text);
+  box-shadow: none;
 }
 
 button[data-tool='prune'].active,
 button[data-tool='pinch'].active {
   border-color: var(--danger);
-  background: rgba(176, 80, 72, 0.18);
+  background: rgba(168, 78, 70, 0.14);
   color: var(--text);
+  box-shadow: none;
 }
 
 .hint {
   pointer-events: none;
   margin: 0;
   color: var(--muted);
-  font-size: 0.75rem;
-  text-shadow: 0 1px 0 rgba(255, 255, 255, 0.35);
+  font-size: 0.72rem;
+  letter-spacing: 0.02em;
+  opacity: 0.85;
   max-width: 420px;
 }
 
-/* Bottom cluster: tools + time + files stacked for mobile */
 #hud > .panel.tools {
   margin-top: auto;
 }
 
 @media (min-width: 720px) {
   #hud {
-    padding: 16px;
+    padding: 18px;
   }
 
   .hud-header h1 {
-    font-size: 1.35rem;
+    font-size: 1.12rem;
   }
 }
