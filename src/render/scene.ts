@@ -3,6 +3,7 @@ import { OrbitControls } from 'three/examples/jsm/controls/OrbitControls.js';
 import { computeWorldFrames } from '../sim/tree';
 import type { NodeId, TreeState } from '../sim/types';
 import { createGround, createPotGroup } from './pot';
+import { createStudioBackgroundTexture } from './textures';
 import { TreeRenderer } from './treeMesh';
 
 export class BonsaiScene {
@@ -17,6 +18,7 @@ export class BonsaiScene {
   private pot = createPotGroup();
   private ground = createGround();
   private dirty = true;
+  private bgTex = createStudioBackgroundTexture();
 
   constructor(canvas: HTMLCanvasElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -31,20 +33,19 @@ export class BonsaiScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    this.renderer.toneMappingExposure = 1.15;
+    this.renderer.toneMappingExposure = 1.2;
 
     this.scene = new THREE.Scene();
-    this.scene.background = new THREE.Color('#152218');
-    this.scene.fog = new THREE.Fog('#152218', 1.8, 5);
+    this.scene.background = this.bgTex;
+    this.scene.fog = new THREE.FogExp2(0x121c16, 0.22);
 
     this.camera = new THREE.PerspectiveCamera(
-      38,
+      36,
       window.innerWidth / window.innerHeight,
       0.01,
       50,
     );
-    // Frame pot + full sapling (not inside the canopy)
-    this.camera.position.set(0.24, 0.2, 0.28);
+    this.camera.position.set(0.26, 0.2, 0.3);
 
     this.controls = new OrbitControls(this.camera, canvas);
     this.controls.target.set(0, 0.11, 0);
@@ -55,29 +56,36 @@ export class BonsaiScene {
     this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.update();
 
-    const hemi = new THREE.HemisphereLight(0xd0e8ff, 0x3d2a1a, 0.7);
+    // Soft studio lighting
+    const hemi = new THREE.HemisphereLight(0xe8f2ff, 0x3d2a1c, 0.55);
     this.scene.add(hemi);
 
-    const sun = new THREE.DirectionalLight(0xfff4e0, 1.55);
-    sun.position.set(0.9, 1.8, 1.1);
+    const sun = new THREE.DirectionalLight(0xfff2dd, 1.65);
+    sun.position.set(0.85, 1.9, 1.15);
     sun.castShadow = true;
-    sun.shadow.mapSize.set(1024, 1024);
+    sun.shadow.mapSize.set(2048, 2048);
     sun.shadow.camera.near = 0.05;
     sun.shadow.camera.far = 5;
-    sun.shadow.camera.left = -0.4;
-    sun.shadow.camera.right = 0.4;
-    sun.shadow.camera.top = 0.45;
-    sun.shadow.camera.bottom = -0.2;
-    sun.shadow.bias = -0.0003;
+    sun.shadow.camera.left = -0.45;
+    sun.shadow.camera.right = 0.45;
+    sun.shadow.camera.top = 0.5;
+    sun.shadow.camera.bottom = -0.15;
+    sun.shadow.bias = -0.00025;
+    sun.shadow.normalBias = 0.02;
     this.scene.add(sun);
 
-    const fill = new THREE.DirectionalLight(0x9ec0ff, 0.35);
-    fill.position.set(-1.2, 0.6, -0.8);
+    const fill = new THREE.DirectionalLight(0xb0c8ff, 0.4);
+    fill.position.set(-1.4, 0.7, -0.9);
     this.scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xc8e6a0, 0.2);
-    rim.position.set(0.2, 0.4, -1.2);
+    const rim = new THREE.DirectionalLight(0xd0ecc0, 0.28);
+    rim.position.set(0.15, 0.5, -1.3);
     this.scene.add(rim);
+
+    // Soft bounce from ground plane
+    const bounce = new THREE.DirectionalLight(0x8a7058, 0.18);
+    bounce.position.set(0, -1, 0.2);
+    this.scene.add(bounce);
 
     this.scene.add(this.ground);
     this.scene.add(this.pot);
@@ -109,10 +117,6 @@ export class BonsaiScene {
     this.dirty = false;
   }
 
-  /**
-   * Softly reframe camera target/distance so growing trees stay in view
-   * without fighting manual orbit too hard.
-   */
   frameTree(tree: TreeState): void {
     const frames = computeWorldFrames(tree);
     let maxY = 0.08;
@@ -132,7 +136,6 @@ export class BonsaiScene {
     );
     const offset = this.camera.position.clone().sub(this.controls.target);
     const dist = offset.length() || desiredDist;
-    // Only pull back if tree outgrows current framing
     if (dist < desiredDist * 0.92) {
       offset.setLength(dist + (desiredDist - dist) * 0.2);
       this.camera.position.copy(this.controls.target).add(offset);
@@ -194,6 +197,7 @@ export class BonsaiScene {
     window.removeEventListener('resize', this.onResize);
     this.controls.dispose();
     this.treeRenderer.dispose();
+    this.bgTex.dispose();
     this.renderer.dispose();
   }
 }

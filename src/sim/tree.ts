@@ -110,26 +110,32 @@ export function createInternode(
   }
   // New wood starts dormant; season + resources open buds (prevents daily explosion)
   node.buds.push(makeBud(tree, 'terminal', 1, 0, 'dormant'));
-  // Thick trunk wood: no foliage so bark reads; only thin outer shoots get pads
-  const thinness = clamp01(1 - radius / Math.max(species.saplingRadius * 1.2, 1e-6));
-  if (thinness < 0.4 || parentId === null) {
+  // Thick trunk wood: sparse/no foliage so bark reads; outer shoots get pads
+  const thinness = clamp01(
+    1 - radius / Math.max(species.saplingRadius * 1.15, 1e-6),
+  );
+  if (parentId === null) {
     return node;
   }
-  const clusters = Math.max(
-    1,
-    Math.round((1 + length / species.internodeLength.max) * (0.4 + 0.6 * thinness)),
-  );
-  for (let i = 0; i < clusters; i++) {
-    const t = 0.55 + (0.4 * i) / Math.max(1, clusters - 1);
-    const az = (i * 2.399) % (Math.PI * 2);
-    node.foliage.push(
-      makeFoliage(
-        tree,
-        t,
-        az,
-        species.foliageAreaPerInternode * (0.55 + 0.4 * thinness),
+  if (thinness >= 0.28) {
+    const clusters = Math.max(
+      1,
+      Math.round(
+        (1.2 + length / species.internodeLength.max) * (0.5 + 0.7 * thinness),
       ),
     );
+    for (let i = 0; i < clusters; i++) {
+      const t = 0.4 + (0.55 * i) / Math.max(1, clusters - 1);
+      const az = (i * 2.399) % (Math.PI * 2);
+      node.foliage.push(
+        makeFoliage(
+          tree,
+          t,
+          az,
+          species.foliageAreaPerInternode * (0.55 + 0.45 * thinness),
+        ),
+      );
+    }
   }
   return node;
 }

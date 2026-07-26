@@ -1,44 +1,133 @@
 import * as THREE from 'three';
+import {
+  createBarkAlbedoTexture,
+  createBarkNormalTexture,
+  createBarkRoughnessTexture,
+  createFoliageAlbedoTexture,
+  createPotAlbedoTexture,
+  createSoilAlbedoTexture,
+} from './textures';
+
+let barkAlbedo: THREE.CanvasTexture | null = null;
+let barkNormal: THREE.CanvasTexture | null = null;
+let barkRough: THREE.CanvasTexture | null = null;
+let foliageMature: THREE.CanvasTexture | null = null;
+let foliageTip: THREE.CanvasTexture | null = null;
+let soilAlbedo: THREE.CanvasTexture | null = null;
+let potAlbedo: THREE.CanvasTexture | null = null;
+
+function barkMaps() {
+  if (!barkAlbedo) {
+    barkAlbedo = createBarkAlbedoTexture();
+    barkAlbedo.repeat.set(2, 3);
+    barkNormal = createBarkNormalTexture();
+    barkNormal.repeat.set(2, 3);
+    barkRough = createBarkRoughnessTexture();
+    barkRough.repeat.set(2, 3);
+  }
+  return { barkAlbedo: barkAlbedo!, barkNormal: barkNormal!, barkRough: barkRough! };
+}
 
 export function createBarkMaterial(): THREE.MeshStandardMaterial {
+  const { barkAlbedo, barkNormal, barkRough } = barkMaps();
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#8b5a3c'),
-    roughness: 0.88,
+    map: barkAlbedo,
+    normalMap: barkNormal,
+    normalScale: new THREE.Vector2(0.85, 0.85),
+    roughnessMap: barkRough,
+    roughness: 1,
     metalness: 0.02,
-    flatShading: false,
+    color: new THREE.Color('#c4a080'), // multiplies texture
   });
 }
 
+/** Clone bark material with UV repeat scaled to segment proportions. */
+export function barkMaterialForSegment(
+  base: THREE.MeshStandardMaterial,
+  length: number,
+  radius: number,
+): THREE.MeshStandardMaterial {
+  const mat = base.clone();
+  const circ = Math.max(0.01, 2 * Math.PI * radius);
+  const uRepeat = Math.max(0.8, circ / 0.025);
+  const vRepeat = Math.max(0.6, length / 0.02);
+  if (mat.map) {
+    mat.map = mat.map.clone();
+    mat.map.repeat.set(uRepeat, vRepeat);
+    mat.map.needsUpdate = true;
+  }
+  if (mat.normalMap) {
+    mat.normalMap = mat.normalMap.clone();
+    mat.normalMap.repeat.set(uRepeat, vRepeat);
+    mat.normalMap.needsUpdate = true;
+  }
+  if (mat.roughnessMap) {
+    mat.roughnessMap = mat.roughnessMap.clone();
+    mat.roughnessMap.repeat.set(uRepeat, vRepeat);
+    mat.roughnessMap.needsUpdate = true;
+  }
+  // Younger wood slightly greener / smoother
+  return mat;
+}
+
 export function createFoliageMaterial(): THREE.MeshStandardMaterial {
+  if (!foliageMature) {
+    foliageMature = createFoliageAlbedoTexture([45, 95, 48]);
+  }
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#3d6b3a'),
-    roughness: 0.78,
-    metalness: 0.0,
+    map: foliageMature,
+    color: new THREE.Color('#7aab68'),
+    roughness: 0.82,
+    metalness: 0,
     side: THREE.DoubleSide,
+    transparent: true,
+    alphaTest: 0.15,
+    depthWrite: true,
+    // Avoid alpha sorting flicker on dense pads
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
 }
 
 export function createFoliageTipMaterial(): THREE.MeshStandardMaterial {
+  if (!foliageTip) {
+    foliageTip = createFoliageAlbedoTexture([70, 130, 55]);
+  }
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#5a8f4a'),
-    roughness: 0.72,
-    metalness: 0.0,
+    map: foliageTip,
+    color: new THREE.Color('#9ccc78'),
+    roughness: 0.75,
+    metalness: 0,
     side: THREE.DoubleSide,
+    transparent: true,
+    alphaTest: 0.15,
+    depthWrite: true,
+    polygonOffset: true,
+    polygonOffsetFactor: 1,
+    polygonOffsetUnits: 1,
   });
 }
 
 export function createPotMaterial(): THREE.MeshStandardMaterial {
+  if (!potAlbedo) potAlbedo = createPotAlbedoTexture();
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#7a4030'),
-    roughness: 0.72,
-    metalness: 0.04,
+    map: potAlbedo,
+    color: new THREE.Color('#d4a090'),
+    roughness: 0.55,
+    metalness: 0.08,
   });
 }
 
 export function createSoilMaterial(): THREE.MeshStandardMaterial {
+  if (!soilAlbedo) {
+    soilAlbedo = createSoilAlbedoTexture();
+    soilAlbedo.repeat.set(3, 3);
+  }
   return new THREE.MeshStandardMaterial({
-    color: new THREE.Color('#4a3428'),
-    roughness: 1,
+    map: soilAlbedo,
+    color: new THREE.Color('#b8a890'),
+    roughness: 0.98,
     metalness: 0,
   });
 }
@@ -46,8 +135,8 @@ export function createSoilMaterial(): THREE.MeshStandardMaterial {
 export function createWireMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     color: new THREE.Color('#d4b45c'),
-    roughness: 0.4,
-    metalness: 0.6,
+    roughness: 0.35,
+    metalness: 0.65,
   });
 }
 
@@ -55,7 +144,15 @@ export function createHighlightMaterial(): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
     color: new THREE.Color('#b8ff8a'),
     transparent: true,
-    opacity: 0.45,
+    opacity: 0.4,
     depthTest: true,
+  });
+}
+
+export function createGroundMaterial(): THREE.MeshStandardMaterial {
+  return new THREE.MeshStandardMaterial({
+    color: new THREE.Color('#1a241c'),
+    roughness: 1,
+    metalness: 0,
   });
 }
