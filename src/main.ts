@@ -29,6 +29,9 @@ export interface BonsaiHarness {
   getView(): CameraViewName;
   setUiVisible(visible: boolean): void;
   setPhysicsFrozen(frozen: boolean): void;
+  /** Product-GPU DOF A/B. No-op when soft GL skipped the post stack. */
+  setDofEnabled(on: boolean): void;
+  getDofEnabled(): boolean;
   newSapling(): void;
   setSumiChallenge(on: boolean): void;
   setMuted(on: boolean): void;
@@ -67,6 +70,16 @@ declare global {
 try {
   const game = new Game(canvas);
 
+  // Product DOF A/B: `?dof=0` disables BokehPass (grade/SMAA still run on real GPUs).
+  // Soft GL / SwiftShader never builds the post stack — this is a no-op there.
+  const dofParam = new URLSearchParams(window.location.search).get('dof');
+  if (dofParam === '0' || dofParam === 'false' || dofParam === 'off') {
+    // Post is deferred one rAF on real GPUs — re-apply after it exists
+    const applyDofOff = () => game.scene.setDofEnabled(false);
+    applyDofOff();
+    requestAnimationFrame(() => requestAnimationFrame(applyDofOff));
+  }
+
   window.__bonsai = {
     setView(view: CameraViewName) {
       // Ortho audits freeze dynamics for stable geometry screenshots
@@ -81,6 +94,12 @@ try {
     },
     setPhysicsFrozen(frozen: boolean) {
       game.setPhysicsFrozen(frozen);
+    },
+    setDofEnabled(on: boolean) {
+      game.scene.setDofEnabled(on);
+    },
+    getDofEnabled() {
+      return game.scene.getDofEnabled();
     },
     newSapling() {
       game.newSapling();

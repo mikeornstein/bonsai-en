@@ -328,7 +328,18 @@ gh workflow run deploy.yml
 
 ### Known realism gap
 
-Pot/soil are **physically closed** (thick lathe + volumetric soil). IBL uses a procedural **zen-garden HDRI** (PMREM) for ceramic/wire reflections; visible background stays a soft cyclorama so the garden does not compete with the tree. Product post (real GPUs): subtle **bokeh DOF** focused on the orbit target + vignette/contrast grade. Soft GL / SwiftShader skips the post stack. Tree foliage is still **improved stylized** (instanced scale pads), not photoreal juniper. Future work: denser foliage assets, better bark, LOD. Always re-run `npm run screenshots` (including ortho views) after visual PRs.
+Pot/soil are **physically closed** (thick lathe + volumetric soil). IBL uses a procedural **zen-garden HDRI** (PMREM) for ceramic/wire reflections; visible background stays a soft cyclorama so the garden does not compete with the tree. Tree foliage is still **improved stylized** (instanced scale pads), not photoreal juniper. Future work: denser foliage assets, better bark, LOD. Always re-run `npm run screenshots` (including ortho views) after visual PRs.
+
+### Soft GL vs product GPU (lighting / DOF)
+
+| Path | When | Post stack | What you see |
+|------|------|------------|--------------|
+| **Soft GL** | SwiftShader / llvmpipe / Software (agent Puppeteer screenshots, many CI boxes) | **Skipped entirely** — no Bokeh, SMAA, or grade | Full-sharp, linear renderer path; good for geometry / value of materials + lights only |
+| **Product GPU** | Real browser on a device GPU | Grade + subtle DOF + SMAA after first frame | Portrait still-life: sharp trunk + primary pads, far floor gently soft |
+
+- Ortho audit views (`setView('front'|'top'|…)`) **disable DOF** even on product GPUs (full-sharp geometry checks).
+- A/B on product GPU: URL `?dof=0` or harness `window.__bonsai.setDofEnabled(false)` / `getDofEnabled()`.
+- **Art review of lighting/DOF must use a real GPU capture** (or both soft-GL stills *and* a local product grab). Headless screenshots alone mislead on bokeh and grade.
 
 ### Runtime tree physics
 

@@ -63,6 +63,8 @@ export class BonsaiScene {
   private bgTex: THREE.Texture;
   private envMap: THREE.Texture | null = null;
   private post: StudioPost | null = null;
+  /** DOF preference applied when post stack becomes available. */
+  private dofWanted = true;
   private softGL = false;
   private view: CameraViewName = 'default';
   /** Saved play-camera pose so audit views can restore cleanly. */
@@ -100,8 +102,8 @@ export class BonsaiScene {
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap;
     this.renderer.outputColorSpace = THREE.SRGBColorSpace;
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping;
-    // Slightly brighter — zen IBL is muted so the tree keeps midtone punch
-    this.renderer.toneMappingExposure = 1.08;
+    // Open plant midtones vs bright cyclorama (was 1.08 — tree read as silhouette)
+    this.renderer.toneMappingExposure = 1.16;
 
     this.softGL = detectSoftGL(this.renderer);
 
@@ -176,6 +178,8 @@ export class BonsaiScene {
           if (this.pendingSeasonGrade) {
             this.post.setSeasonGrade(this.pendingSeasonGrade);
           }
+          // Honor ?dof=0 / harness set before post existed
+          this.post.setDofEnabled(this.dofWanted);
         } catch (err) {
           console.warn('[bonsai-en] post stack disabled', err);
           this.post = null;
@@ -194,19 +198,20 @@ export class BonsaiScene {
     const envRT = pmrem.fromEquirectangular(equirect);
     this.envMap = envRT.texture;
     this.scene.environment = this.envMap;
-    // Moderate IBL — pot glaze / wire read garden light; foliage stays matte
-    this.scene.environmentIntensity = 0.62;
+    // IBL for glaze / bark form; foliage stays mostly sheen-driven
+    this.scene.environmentIntensity = 0.68;
     equirect.dispose();
     pmrem.dispose();
   }
 
   private setupLights(): void {
-    const hemi = new THREE.HemisphereLight(0xf4f7fc, 0xd0c4b0, 0.48);
+    // Cool sky / warm ground — lifts shadow-side bark + pads without flattening
+    const hemi = new THREE.HemisphereLight(0xf0f5fc, 0xd8cbb8, 0.58);
     this.hemiLight = hemi;
     this.scene.add(hemi);
 
-    // Key as soft window / shoji — single soft source from upper-right
-    const sun = new THREE.DirectionalLight(0xfff4e8, 1.42);
+    // Soft window key — slightly less hard than before so canopy shadow doesn't ink out
+    const sun = new THREE.DirectionalLight(0xfff4e8, 1.28);
     sun.position.set(1.15, 1.55, 0.55);
     sun.castShadow = true;
     // Must be in the scene graph for the light to track the target
@@ -229,20 +234,22 @@ export class BonsaiScene {
     // caused heavy peter-panning — shadows floated off the pedestal.
     sun.shadow.bias = -0.00006;
     sun.shadow.normalBias = 0.0003;
-    sun.shadow.radius = this.softGL ? 1 : 1.6;
+    // Slightly softer contact under canopy (still readable on pedestal)
+    sun.shadow.radius = this.softGL ? 1.2 : 2.0;
     this.scene.add(sun);
 
-    const fill = new THREE.DirectionalLight(0xdce6ff, 0.34);
+    // Cool fill opens the key-shadow side of trunk and pads
+    const fill = new THREE.DirectionalLight(0xd4e2ff, 0.48);
     fill.position.set(-1.5, 1.0, -0.55);
     this.fillLight = fill;
     this.scene.add(fill);
 
-    const rim = new THREE.DirectionalLight(0xffffff, 0.24);
+    const rim = new THREE.DirectionalLight(0xffffff, 0.28);
     rim.position.set(0.05, 0.75, -1.5);
     this.scene.add(rim);
 
-    // Gentle bounce — keep weak so real contact shadows on the pedestal stay readable
-    const bounce = new THREE.DirectionalLight(0xe8e0d4, 0.08);
+    // Floor bounce — opens underside of pads / lower trunk without killing contact shadow
+    const bounce = new THREE.DirectionalLight(0xece4d6, 0.14);
     bounce.position.set(0.15, 0.05, -0.35);
     this.scene.add(bounce);
   }
@@ -259,7 +266,7 @@ export class BonsaiScene {
     // Tip pad assignment depends on season — rebuild when it changes
     this.dirty = true;
 
-    // Window Kelvin / intensity by season (subtle)
+    // Window Kelvin / intensity by season — temp shift, not “turn off the plant”
     if (this.keyLight) {
       const colors: Record<Season, number> = {
         dormant: 0xe8eef8,
@@ -268,12 +275,13 @@ export class BonsaiScene {
         hardening: 0xfff0dc,
         rest: 0xeeece8,
       };
+      // Floors raised so dormant/rest stay readable midtones
       const intensities: Record<Season, number> = {
-        dormant: 1.18,
-        earlyFlush: 1.38,
-        mainFlush: 1.48,
-        hardening: 1.4,
-        rest: 1.22,
+        dormant: 1.12,
+        earlyFlush: 1.26,
+        mainFlush: 1.34,
+        hardening: 1.28,
+        rest: 1.16,
       };
       this.keyLight.color.setHex(colors[season]);
       this.keyLight.intensity = intensities[season];
@@ -283,19 +291,20 @@ export class BonsaiScene {
     }
     if (this.hemiLight) {
       if (season === 'dormant' || season === 'rest') {
-        this.hemiLight.intensity = 0.4;
+        this.hemiLight.intensity = 0.52;
         this.hemiLight.color.setHex(0xe8eef4);
       } else if (season === 'mainFlush' || season === 'earlyFlush') {
-        this.hemiLight.intensity = 0.52;
+        this.hemiLight.intensity = 0.6;
         this.hemiLight.color.setHex(0xf0f6ec);
       } else {
-        this.hemiLight.intensity = 0.46;
+        this.hemiLight.intensity = 0.56;
         this.hemiLight.color.setHex(0xf4f0e8);
       }
     }
     if (this.fillLight) {
+      // Cool fill stays strong in cool seasons so bark form remains
       this.fillLight.intensity =
-        season === 'dormant' ? 0.42 : season === 'rest' ? 0.36 : 0.32;
+        season === 'dormant' ? 0.54 : season === 'rest' ? 0.5 : 0.46;
     }
   }
 
@@ -613,11 +622,12 @@ export class BonsaiScene {
     }
     if (this.post?.isEnabled) {
       try {
-        // Keep DOF focus on the bonsai (orbit target) as the camera moves
+        // Focus plane: stable subject depth at lower-canopy / pot-rim mass
+        // (orbit target + slight upward bias so primary pads stay in the DOF slab)
         if (this.view === 'default' && this.camera instanceof THREE.PerspectiveCamera) {
-          const focusDist = this.perspectiveCamera.position.distanceTo(
-            this.controls.target,
-          );
+          const focusPoint = this.controls.target.clone();
+          focusPoint.y += 0.025;
+          const focusDist = this.perspectiveCamera.position.distanceTo(focusPoint);
           this.post.setFocusDistance(focusDist);
         }
         this.post.render();
@@ -629,6 +639,17 @@ export class BonsaiScene {
       }
     }
     this.renderer.render(this.scene, this.camera);
+  }
+
+  /** Product-GPU DOF toggle for A/B (`?dof=0` / harness). No-op on soft GL. */
+  setDofEnabled(on: boolean): void {
+    this.dofWanted = on;
+    this.post?.setDofEnabled(on);
+  }
+
+  getDofEnabled(): boolean {
+    if (!this.post) return false;
+    return this.post.isDofEnabled;
   }
 
   dispose(): void {

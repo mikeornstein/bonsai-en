@@ -43,12 +43,14 @@ export function createBarkMaterial(): THREE.MeshStandardMaterial {
   return new THREE.MeshStandardMaterial({
     map: barkAlbedo,
     normalMap: barkNormal,
-    normalScale: new THREE.Vector2(1.2, 1.2),
+    normalScale: new THREE.Vector2(1.15, 1.15),
     roughnessMap: barkRough,
-    roughness: 0.94,
+    // Slightly less matte so form + garden IBL open the key face
+    roughness: 0.88,
     metalness: 0.01,
-    color: new THREE.Color('#8a6e52'),
-    envMapIntensity: 0.22,
+    // Lifted midtone — dark map × old #8a6e52 read as muddy black in shadow
+    color: new THREE.Color('#a08260'),
+    envMapIntensity: 0.38,
   });
 }
 
@@ -75,16 +77,18 @@ export function barkMaterialForSegment(
 
 export function createFoliageMaterial(): THREE.MeshPhysicalMaterial {
   if (!foliageMature) {
-    foliageMature = createFoliageAlbedoTexture([32, 78, 38]);
+    // Brighter scale map so pads keep midtone on the key face (was near-black)
+    foliageMature = createFoliageAlbedoTexture([46, 98, 52]);
   }
   return new THREE.MeshPhysicalMaterial({
     map: foliageMature,
-    color: new THREE.Color('#3f6e38'),
-    roughness: 0.86,
+    color: new THREE.Color('#4f8248'),
+    roughness: 0.8,
     metalness: 0,
-    sheen: 0.18,
-    sheenRoughness: 0.72,
-    sheenColor: new THREE.Color('#6a9850'),
+    // Edge scatter / tip light without plastic wrap
+    sheen: 0.32,
+    sheenRoughness: 0.62,
+    sheenColor: new THREE.Color('#7aab58'),
     side: THREE.DoubleSide,
     // Cutout only — avoid transparent sorting glow that reads as plastic wrap
     transparent: false,
@@ -98,16 +102,16 @@ export function createFoliageMaterial(): THREE.MeshPhysicalMaterial {
 
 export function createFoliageTipMaterial(): THREE.MeshPhysicalMaterial {
   if (!foliageTip) {
-    foliageTip = createFoliageAlbedoTexture([55, 108, 42]);
+    foliageTip = createFoliageAlbedoTexture([68, 122, 52]);
   }
   return new THREE.MeshPhysicalMaterial({
     map: foliageTip,
-    color: new THREE.Color('#5a8e48'),
-    roughness: 0.78,
+    color: new THREE.Color('#6a9a52'),
+    roughness: 0.72,
     metalness: 0,
-    sheen: 0.28,
-    sheenRoughness: 0.58,
-    sheenColor: new THREE.Color('#8cbb5e'),
+    sheen: 0.4,
+    sheenRoughness: 0.48,
+    sheenColor: new THREE.Color('#9ccc68'),
     side: THREE.DoubleSide,
     transparent: false,
     alphaTest: 0.4,

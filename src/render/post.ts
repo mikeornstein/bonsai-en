@@ -13,11 +13,12 @@ import { OutputPass } from 'three/examples/jsm/postprocessing/OutputPass.js';
 const GradeShader = {
   uniforms: {
     tDiffuse: { value: null as THREE.Texture | null },
-    vignette: { value: 0.34 },
-    lift: { value: 0.02 },
-    contrast: { value: 1.1 },
+    // Lighter vignette so upper canopy midtones aren't crushed at frame edge
+    vignette: { value: 0.24 },
+    lift: { value: 0.032 },
+    contrast: { value: 1.06 },
     // Slight mid-tone saturation so green foliage pops against soft bg
-    sat: { value: 1.06 },
+    sat: { value: 1.05 },
     // Season temperature: negative = cooler, positive = warmer (subtle)
     temp: { value: 0.0 },
     // Mild green ambient bias for flush seasons
@@ -78,59 +79,64 @@ export function seasonGradeFor(
 ): SeasonGradeParams {
   switch (season) {
     case 'dormant':
-      // Cooler key, lower sat, softer contrast
+      // Cooler + lower sat — temp shift only; keep plant midtones open
       return {
-        vignette: 0.38,
-        lift: 0.015,
-        contrast: 1.04,
-        sat: 0.92,
+        vignette: 0.28,
+        lift: 0.028,
+        contrast: 1.02,
+        sat: 0.94,
         temp: -0.55,
-        greenBias: -0.15,
+        greenBias: -0.12,
       };
     case 'earlyFlush':
       return {
-        vignette: 0.32,
-        lift: 0.025,
-        contrast: 1.08,
-        sat: 1.08,
+        vignette: 0.22,
+        lift: 0.034,
+        contrast: 1.05,
+        sat: 1.07,
         temp: -0.1,
-        greenBias: 0.55,
+        greenBias: 0.5,
       };
     case 'mainFlush':
       return {
-        vignette: 0.3,
-        lift: 0.028,
-        contrast: 1.1,
-        sat: 1.12,
+        vignette: 0.2,
+        lift: 0.036,
+        contrast: 1.06,
+        sat: 1.1,
         temp: 0.05,
-        greenBias: 0.7,
+        greenBias: 0.65,
       };
     case 'hardening':
-      // Warmer, drier, midtone contrast
+      // Warmer, drier — relative to flush, not unreadable
       return {
-        vignette: 0.34,
-        lift: 0.018,
-        contrast: 1.14,
+        vignette: 0.24,
+        lift: 0.028,
+        contrast: 1.08,
         sat: 1.02,
         temp: 0.45,
         greenBias: 0.05,
       };
     case 'rest':
-      // Muted, near-monochrome green
+      // Muted green — still readable bark/pads
       return {
-        vignette: 0.36,
-        lift: 0.012,
-        contrast: 1.06,
-        sat: 0.88,
+        vignette: 0.26,
+        lift: 0.026,
+        contrast: 1.03,
+        sat: 0.9,
         temp: -0.15,
-        greenBias: 0.1,
+        greenBias: 0.08,
       };
   }
 }
 
-/** Subtle product-shot DOF: focus on bonsai, soft floor / far field. */
-const DOF_APERTURE = 0.018;
-const DOF_MAX_BLUR = 0.0075;
+/**
+ * Subtle product-shot DOF: thin-lens feel on far floor only.
+ * Prior aperture 0.018 / maxblur 0.0075 read as soft mush on subject.
+ */
+const DOF_APERTURE = 0.0085;
+const DOF_MAX_BLUR = 0.0038;
+/** Exponential smooth on focus distance (per setFocusDistance call ≈ frame). */
+const DOF_FOCUS_SMOOTH = 0.14;
 
 type BokehUniforms = {
   focus: { value: number };
@@ -155,9 +161,15 @@ export class StudioPost {
   private smaa: SMAAPass;
   private grade: ShaderPass;
   private enabled = true;
+  /** Actual BokehPass on/off (respects camera + user preference). */
   private dofEnabled = true;
+  /** User/harness preference — survives ortho audit temporary disable. */
+  private dofWanted = true;
   private camera: THREE.Camera;
   private light: boolean;
+  /** Smoothed focus distance (world units, camera→subject). */
+  private focusSmoothed = 0.52;
+  private focusInitialized = false;
 
   constructor(
     private renderer: THREE.WebGLRenderer,
@@ -182,6 +194,7 @@ export class StudioPost {
       this.composer.addPass(this.bokeh);
     } else {
       this.dofEnabled = false;
+      this.dofWanted = false;
     }
 
     const size = renderer.getSize(new THREE.Vector2());
@@ -204,10 +217,12 @@ export class StudioPost {
     this.renderPass.camera = camera;
     if (this.bokeh) {
       this.bokeh.camera = camera;
-      // Ortho geometry audits need full sharpness — no DOF
-      const isPersp = camera instanceof THREE.PerspectiveCamera;
-      this.setDofEnabled(isPersp);
-      if (isPersp && this.bokehUniforms) {
+      // Ortho geometry audits need full sharpness — DOF forced off, preference kept
+      this.applyDofState();
+      if (
+        camera instanceof THREE.PerspectiveCamera &&
+        this.bokehUniforms
+      ) {
         this.bokehUniforms.aspect.value = camera.aspect;
         this.bokehUniforms.nearClip.value = camera.near;
         this.bokehUniforms.farClip.value = camera.far;
@@ -216,16 +231,43 @@ export class StudioPost {
   }
 
   /**
-   * Keep focus plane on the orbit target (bonsai / pot center).
-   * `distance` is camera→target world distance (matches Bokeh view-Z focus).
+   * Keep focus plane on the subject (orbit target / canopy bias).
+   * `distance` is camera→subject world distance (matches Bokeh view-Z focus).
+   * Smoothed so orbit damping does not swim the focus plane every frame.
    */
   setFocusDistance(distance: number): void {
     if (!this.dofEnabled || !this.bokehUniforms) return;
-    this.bokehUniforms.focus.value = Math.max(0.05, distance);
+    const target = Math.max(0.05, distance);
+    if (!this.focusInitialized) {
+      this.focusSmoothed = target;
+      this.focusInitialized = true;
+    } else {
+      this.focusSmoothed += (target - this.focusSmoothed) * DOF_FOCUS_SMOOTH;
+    }
+    this.bokehUniforms.focus.value = this.focusSmoothed;
   }
 
+  /**
+   * User / harness DOF preference. Ortho audits still force full-sharp while active.
+   */
   setDofEnabled(on: boolean): void {
     if (!this.bokeh) return;
+    this.dofWanted = on;
+    this.applyDofState();
+    if (this.dofEnabled) {
+      // Avoid a large focus snap when re-enabling after orbit / A/B
+      this.focusInitialized = false;
+    }
+  }
+
+  get isDofEnabled(): boolean {
+    return this.dofEnabled && !!this.bokeh?.enabled;
+  }
+
+  private applyDofState(): void {
+    if (!this.bokeh) return;
+    const isPersp = this.camera instanceof THREE.PerspectiveCamera;
+    const on = this.dofWanted && isPersp;
     this.dofEnabled = on;
     this.bokeh.enabled = on;
   }
