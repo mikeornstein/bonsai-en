@@ -50,6 +50,27 @@ interface SegmentPoseHandles {
   r1: number;
 }
 
+/** Training wire coil — helix baked in local +Y; re-oriented from live frames. */
+interface WirePoseHandle {
+  mesh: THREE.Mesh;
+  nodeId: NodeId;
+}
+
+/** Cut scar disc at live tip. */
+interface ScarPoseHandle {
+  mesh: THREE.Mesh;
+  nodeId: NodeId;
+}
+
+/** Bud swell sphere — local t/azimuth; position from live frame each pose. */
+interface BudPoseHandle {
+  mesh: THREE.Mesh;
+  nodeId: NodeId;
+  t: number;
+  azimuth: number;
+  size: number;
+}
+
 export class TreeRenderer {
   readonly group = new THREE.Group();
   /** Lazily created so scene boot isn't blocked by procedural textures. */
@@ -69,8 +90,20 @@ export class TreeRenderer {
   private radialSegments = 14;
   private readonly _dummy = new THREE.Object3D();
   private readonly _jointGeo = new THREE.SphereGeometry(1, 12, 10);
+  /** Scratch vectors for decoration re-pose (avoid GC in applyPose). */
+  private readonly _vBase = new THREE.Vector3();
+  private readonly _vTip = new THREE.Vector3();
+  private readonly _vDir = new THREE.Vector3();
+  private readonly _vN = new THREE.Vector3();
+  private readonly _vB = new THREE.Vector3();
+  private readonly _vSpin = new THREE.Vector3();
+  private readonly _vUp = new THREE.Vector3(0, 0, 1);
   /** Branch mesh handles for per-frame physics pose streaming. */
   private poseHandles = new Map<NodeId, SegmentPoseHandles>();
+  /** Wire / scar / bud attachments re-placed from live frames in applyPose. */
+  private wirePoseHandles: WirePoseHandle[] = [];
+  private scarPoseHandles: ScarPoseHandle[] = [];
+  private budPoseHandles: BudPoseHandle[] = [];
   /** Last tree used for foliage re-pose (structural rebuild only). */
   private poseTree: TreeState | null = null;
   private matureFoliage: THREE.InstancedMesh | null = null;
@@ -190,6 +223,9 @@ export class TreeRenderer {
     this.clearGroup(this.budGroup);
     this.pickables.length = 0;
     this.poseHandles.clear();
+    this.wirePoseHandles.length = 0;
+    this.scarPoseHandles.length = 0;
+    this.budPoseHandles.length = 0;
     this.matureFoliage = null;
     this.tipFoliage = null;
     this.poseTree = tree;
@@ -219,6 +255,7 @@ export class TreeRenderer {
       this.collectScales(node, frame, tree, scales);
       if (node.wire) {
         this.addWireVisual(
+          node.id,
           frame,
           Math.max(node.radius, MIN_VISUAL_RADIUS),
           node.wire.setAmount,
@@ -226,7 +263,7 @@ export class TreeRenderer {
         );
       }
       if (node.wound > 0.05) {
-        this.addScarVisual(frame, node);
+        this.addScarVisual(node.id, frame, node);
       }
       this.addBudMarkers(node, frame);
     }
@@ -281,7 +318,7 @@ export class TreeRenderer {
 
   /**
    * Stream live physics pose onto existing meshes without a full rebuild.
-   * Foliage instance matrices are regenerated from the live frames.
+   * Branch segments, wire coils, bud orbs, scars, and foliage follow live frames.
    */
   applyPose(tree: TreeState, frames: Map<NodeId, NodeWorld>): void {
     for (const [id, handles] of this.poseHandles) {
@@ -291,6 +328,23 @@ export class TreeRenderer {
       handles.jointBase.position.set(...frame.base);
       if (handles.jointTip) {
         handles.jointTip.position.set(...frame.tip);
+      }
+    }
+
+    // Decorations: same live frames as wood (no TubeGeometry rebuild)
+    for (const h of this.wirePoseHandles) {
+      const frame = frames.get(h.nodeId);
+      if (frame) this.placeWireAlongFrame(h.mesh, frame);
+    }
+    for (const h of this.scarPoseHandles) {
+      const frame = frames.get(h.nodeId);
+      if (frame) this.placeScarOnFrame(h.mesh, frame);
+    }
+    for (const h of this.budPoseHandles) {
+      const frame = frames.get(h.nodeId);
+      const node = tree.nodes[h.nodeId];
+      if (frame && node) {
+        this.placeBudOnFrame(h.mesh, frame, node, h.t, h.azimuth, h.size);
       }
     }
 
@@ -662,26 +716,23 @@ export class TreeRenderer {
 
   /**
    * Training wire — dulls as setAmount rises (visual lignify cue).
+   * Helix is baked in local +Y (length fixed at rebuild); applyPose re-orients
+   * the mesh from live frames without reallocating TubeGeometry.
    * setAmount 0 = bright training metal; 1 = dull held wood.
    */
   private addWireVisual(
+    nodeId: NodeId,
     frame: NodeWorld,
     radius: number,
     setAmount = 0,
     lignification = 0,
   ): void {
-    const points: THREE.Vector3[] = [];
     const base = new THREE.Vector3(...frame.base);
     const tip = new THREE.Vector3(...frame.tip);
-    const dir = tip.clone().sub(base);
-    const len = dir.length() || 1e-6;
-    dir.normalize();
+    const len = tip.distanceTo(base) || 1e-6;
 
-    const normal = new THREE.Vector3(1, 0, 0);
-    if (Math.abs(dir.dot(normal)) > 0.9) normal.set(0, 0, 1);
-    const binormal = new THREE.Vector3().crossVectors(dir, normal).normalize();
-    normal.crossVectors(binormal, dir).normalize();
-
+    // Local helix: segment axis = +Y from 0→len; XZ = wrap radius
+    const points: THREE.Vector3[] = [];
     const turns = 4;
     const segs = 40;
     const amp = radius + 0.0014;
@@ -689,11 +740,7 @@ export class TreeRenderer {
       const t = i / segs;
       const ang = t * turns * Math.PI * 2;
       points.push(
-        base
-          .clone()
-          .addScaledVector(dir, t * len)
-          .addScaledVector(normal, Math.cos(ang) * amp)
-          .addScaledVector(binormal, Math.sin(ang) * amp),
+        new THREE.Vector3(Math.cos(ang) * amp, t * len, Math.sin(ang) * amp),
       );
     }
     const curve = new THREE.CatmullRomCurve3(points);
@@ -714,53 +761,56 @@ export class TreeRenderer {
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.userData.disposeMat = true;
+    this.placeWireAlongFrame(mesh, frame);
     this.wireGroup.add(mesh);
+    this.wirePoseHandles.push({ mesh, nodeId });
+  }
+
+  /** Place local-+Y wire coil so base→tip matches live frame (rigid, no re-tube). */
+  private placeWireAlongFrame(mesh: THREE.Mesh, frame: NodeWorld): void {
+    this._vBase.set(...frame.base);
+    this._vTip.set(...frame.tip);
+    this._vDir.copy(this._vTip).sub(this._vBase);
+    const len = this._vDir.length() || 1e-6;
+    this._vDir.multiplyScalar(1 / len);
+    mesh.position.copy(this._vBase);
+    mesh.quaternion.setFromUnitVectors(UP, this._vDir);
   }
 
   /** Cut scar — dark when fresh (high wound), fades as wound decays. */
-  private addScarVisual(frame: NodeWorld, node: Internode): void {
-    const tip = new THREE.Vector3(...frame.tip);
-    const dir = new THREE.Vector3(...frame.dir).normalize();
+  private addScarVisual(
+    nodeId: NodeId,
+    frame: NodeWorld,
+    node: Internode,
+  ): void {
     const r = this.visualRadius(node.radius) * (0.9 + node.wound * 0.4);
     const mat = this.scarMat!.clone();
     // Fresh cut: redder/darker; healed: cooler charcoal
     const w = node.wound;
     mat.color.setRGB(0.22 + w * 0.2, 0.12 + w * 0.05, 0.1);
     mat.roughness = 0.9 - w * 0.1;
-    const disc = new THREE.Mesh(
-      new THREE.CircleGeometry(r, 12),
-      mat,
-    );
-    disc.position.copy(tip).addScaledVector(dir, 0.0002);
-    disc.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    const disc = new THREE.Mesh(new THREE.CircleGeometry(r, 12), mat);
     disc.userData.disposeMat = true;
+    this.placeScarOnFrame(disc, frame);
     this.scarGroup.add(disc);
+    this.scarPoseHandles.push({ mesh: disc, nodeId });
+  }
+
+  private placeScarOnFrame(mesh: THREE.Mesh, frame: NodeWorld): void {
+    this._vTip.set(...frame.tip);
+    this._vDir.set(...frame.dir).normalize();
+    mesh.position.copy(this._vTip).addScaledVector(this._vDir, 0.0002);
+    mesh.quaternion.setFromUnitVectors(this._vUp, this._vDir);
   }
 
   /** Pre-break bud swell when breakForce is high. */
   private addBudMarkers(node: Internode, frame: NodeWorld): void {
-    const base = new THREE.Vector3(...frame.base);
-    const dir = new THREE.Vector3(...frame.dir).normalize();
-    const r = this.visualRadius(node.radius);
-    const sideRef =
-      Math.abs(dir.y) > 0.9
-        ? new THREE.Vector3(1, 0, 0)
-        : new THREE.Vector3(0, 1, 0);
-    const binormal = new THREE.Vector3().crossVectors(dir, sideRef).normalize();
-    const normal = new THREE.Vector3().crossVectors(binormal, dir).normalize();
-
     for (const bud of node.buds) {
       if (bud.state === 'dead') continue;
       // Only show swell when stimulus is legible
       if (bud.breakForce < 0.35 && bud.state !== 'flushing') continue;
       const force = Math.min(1.2, bud.breakForce);
       const size = 0.00055 + force * 0.0011;
-      const ang = bud.azimuth;
-      const spin = new THREE.Vector3(
-        normal.x * Math.cos(ang) + binormal.x * Math.sin(ang),
-        normal.y * Math.cos(ang) + binormal.y * Math.sin(ang),
-        normal.z * Math.cos(ang) + binormal.z * Math.sin(ang),
-      ).normalize();
       const mat = this.budMat!.clone();
       if (bud.state === 'flushing') {
         mat.color.set('#7aaa50');
@@ -772,13 +822,49 @@ export class TreeRenderer {
         new THREE.SphereGeometry(size, 8, 6),
         mat,
       );
-      sphere.position
-        .copy(base)
-        .addScaledVector(dir, bud.t * node.length)
-        .addScaledVector(spin, r + size * 0.6);
       sphere.userData.disposeMat = true;
+      this.placeBudOnFrame(sphere, frame, node, bud.t, bud.azimuth, size);
       this.budGroup.add(sphere);
+      this.budPoseHandles.push({
+        mesh: sphere,
+        nodeId: node.id,
+        t: bud.t,
+        azimuth: bud.azimuth,
+        size,
+      });
     }
+  }
+
+  private placeBudOnFrame(
+    mesh: THREE.Mesh,
+    frame: NodeWorld,
+    node: Internode,
+    t: number,
+    azimuth: number,
+    size: number,
+  ): void {
+    this._vBase.set(...frame.base);
+    this._vDir.set(...frame.dir).normalize();
+    const r = this.visualRadius(node.radius);
+    // Match collectScales side-frame construction for stable azimuth on live pose
+    if (Math.abs(this._vDir.y) > 0.9) {
+      this._vN.set(1, 0, 0);
+    } else {
+      this._vN.set(0, 1, 0);
+    }
+    this._vB.crossVectors(this._vDir, this._vN).normalize();
+    this._vN.crossVectors(this._vB, this._vDir).normalize();
+    const cosA = Math.cos(azimuth);
+    const sinA = Math.sin(azimuth);
+    this._vSpin.set(
+      this._vN.x * cosA + this._vB.x * sinA,
+      this._vN.y * cosA + this._vB.y * sinA,
+      this._vN.z * cosA + this._vB.z * sinA,
+    ).normalize();
+    mesh.position
+      .copy(this._vBase)
+      .addScaledVector(this._vDir, t * node.length)
+      .addScaledVector(this._vSpin, r + size * 0.6);
   }
 
   private clearGroup(g: THREE.Group): void {
