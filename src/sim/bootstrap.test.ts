@@ -72,6 +72,8 @@ describe('isPlayableTree / ensurePlayableTree (boot guard)', () => {
     const ageText = formatAge(tree.agePlantDays);
     const nodeCount = String(Object.keys(tree.nodes).length);
     expect(ageText).not.toBe('0 d');
+    expect(ageText).not.toBe('—');
+    expect(ageText.length).toBeGreaterThan(0);
     expect(nodeCount).not.toBe('—');
     expect(Number(nodeCount)).toBeGreaterThan(0);
     expect(tree.speciesId).toBeTruthy();

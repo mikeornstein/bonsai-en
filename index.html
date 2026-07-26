@@ -9,7 +9,7 @@
     <meta name="theme-color" content="#e6e1d8" />
     <meta
       name="description"
-      content="Bonsai-en — a biologically grounded 3D bonsai training simulation."
+      content="Bonsai-en — a quiet 3D juniper training room."
     />
     <title>Bonsai-en</title>
     <link rel="stylesheet" href="/src/styles.css" />
@@ -42,31 +42,69 @@
         </section>
 
         <section class="panel time" aria-label="Time controls">
-          <button type="button" data-speed="0" class="speed" title="Pause">⏸</button>
-          <button type="button" data-speed="live" class="speed active" title="Live">▶</button>
-          <button type="button" data-speed="day" class="speed" title="1 day / sec">Day</button>
-          <button type="button" data-speed="week" class="speed" title="1 week / sec">Wk</button>
-          <button type="button" data-speed="month" class="speed" title="1 month / sec">Mo</button>
-          <button type="button" data-speed="year" class="speed" title="1 year / sec">Yr</button>
+          <button type="button" data-speed="0" class="speed" title="Still">Still</button>
+          <button type="button" data-speed="live" class="speed active" title="Live">Live</button>
+          <button type="button" data-speed="day" class="speed" title="Day speed">Day</button>
+          <button type="button" data-speed="week" class="speed" title="Season pace">Season</button>
+          <button type="button" data-speed="month" class="speed" title="Month pace">Mo</button>
+          <button type="button" data-speed="year" class="speed" title="Years pace">Years</button>
         </section>
 
         <section class="panel meta" aria-label="Tree info">
           <div id="info">
-            <div><span class="label">Age</span> <span id="info-age">0 d</span></div>
+            <div><span class="label">Age</span> <span id="info-age">—</span></div>
             <div><span class="label">Season</span> <span id="info-season">—</span></div>
-            <div><span class="label">Reserves</span> <span id="info-reserves">—</span></div>
-            <div><span class="label">Nodes</span> <span id="info-nodes">—</span></div>
-            <div id="info-selection" class="selection">Select a branch</div>
+            <div class="vitality-row">
+              <span class="label">Vitality</span>
+              <span class="vitality-track" aria-hidden="true"
+                ><span id="info-vitality-bar" class="vitality-bar"></span
+              ></span>
+              <span id="info-reserves" class="vitality-word">—</span>
+            </div>
+            <div id="info-nodes-row" class="debug-only hidden">
+              <span class="label">Nodes</span> <span id="info-nodes">—</span>
+            </div>
+            <div id="info-selection" class="selection">This branch</div>
           </div>
         </section>
 
         <section class="panel files" aria-label="Save and share">
-          <button type="button" id="btn-new" title="New sapling">New</button>
-          <button type="button" id="btn-save" title="Save locally">Save</button>
-          <button type="button" id="btn-export" title="Export JSON">Export</button>
-          <button type="button" id="btn-import" title="Import JSON">Import</button>
-          <button type="button" id="btn-share" title="Copy share link">Share</button>
-          <input type="file" id="import-file" accept="application/json,.json,.bonsai.json" hidden />
+          <div class="files-menu">
+            <button
+              type="button"
+              id="btn-files"
+              class="files-toggle"
+              title="Save, share, and files"
+              aria-haspopup="true"
+              aria-expanded="false"
+              aria-controls="files-menu"
+            >
+              ⋯
+            </button>
+            <div id="files-menu" class="files-dropdown" hidden role="menu">
+              <button type="button" id="btn-new" role="menuitem" title="New sapling">
+                New
+              </button>
+              <button type="button" id="btn-save" role="menuitem" title="Save locally">
+                Save
+              </button>
+              <button type="button" id="btn-share" role="menuitem" title="Copy share link">
+                Share
+              </button>
+              <button type="button" id="btn-export" role="menuitem" title="Export JSON">
+                Export
+              </button>
+              <button type="button" id="btn-import" role="menuitem" title="Import JSON">
+                Import
+              </button>
+            </div>
+          </div>
+          <input
+            type="file"
+            id="import-file"
+            accept="application/json,.json,.bonsai.json"
+            hidden
+          />
         </section>
 
         <p class="hint" id="hint">

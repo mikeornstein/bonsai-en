@@ -48,19 +48,40 @@ export function seasonLabel(season: Season): string {
     case 'dormant':
       return 'Dormant';
     case 'earlyFlush':
-      return 'Early flush';
+      return 'Early spring';
     case 'mainFlush':
-      return 'Main flush';
+      return 'Spring flush';
     case 'hardening':
       return 'Hardening';
     case 'rest':
-      return 'Rest';
+      return 'Late rest';
   }
 }
 
+/** Human age phrase for the quiet HUD (not lab "0 d"). */
 export function formatAge(days: number): string {
-  if (days < 60) return `${Math.floor(days)} d`;
-  if (days < 365) return `${(days / 30).toFixed(1)} mo`;
+  if (days < 14) return 'Young sapling';
+  if (days < 45) return `${Math.floor(days)} days`;
+  if (days < 365) {
+    const mo = days / 30;
+    return mo < 2 ? 'About a month' : `${mo.toFixed(0)} months`;
+  }
   const y = days / 365;
-  return `${y.toFixed(y < 10 ? 1 : 0)} y`;
+  if (y < 1.5) return 'About a year';
+  if (y < 10) return `${y.toFixed(1)} years`;
+  return `${Math.floor(y)} years`;
+}
+
+/** Soft vitality word from reserves (arbitrary units ~0–40+). */
+export function vitalityWord(reserves: number): string {
+  if (reserves < 6) return 'Low';
+  if (reserves < 14) return 'Fair';
+  if (reserves < 24) return 'Steady';
+  if (reserves < 34) return 'Strong';
+  return 'Abundant';
+}
+
+/** Bar fill 0–1 from reserves. */
+export function vitalityLevel(reserves: number): number {
+  return Math.max(0, Math.min(1, reserves / 36));
 }
