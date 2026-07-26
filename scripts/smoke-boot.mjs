@@ -1,6 +1,6 @@
 /**
  * End-to-end boot smoke: catches the failure mode where the app stays on
- * HTML defaults (Age "0 d", Season "—", Nodes "—") and buttons never bind.
+ * HTML defaults (Age "—", Season "—", Vitality "—") and buttons never bind.
  *
  * Usage (dev server or preview must be up):
  *   BOOT_URL=http://localhost:5173 node scripts/smoke-boot.mjs
@@ -32,17 +32,16 @@ try {
   await page.waitForSelector('#btn-new', { timeout: 15000 });
   await new Promise((r) => setTimeout(r, 1500));
 
-  // Wait until HUD leaves HTML defaults (index.html: "0 d", "—", "—")
+  // Wait until HUD leaves HTML defaults (index.html: Age/Season/Vitality "—")
   await page.waitForFunction(
     () => {
       const age = document.getElementById('info-age')?.textContent?.trim();
       const season = document.getElementById('info-season')?.textContent?.trim();
-      const nodes = document.getElementById('info-nodes')?.textContent?.trim();
-      if (!age || !season || !nodes) return false;
+      const vitality = document.getElementById('info-reserves')?.textContent?.trim();
+      if (!age || !season || !vitality) return false;
       // Not the static HTML placeholders
-      if (season === '—' || nodes === '—') return false;
-      const n = Number(nodes);
-      return Number.isFinite(n) && n > 0;
+      if (age === '—' || season === '—' || vitality === '—') return false;
+      return true;
     },
     { timeout: 30000 },
   );
@@ -50,12 +49,12 @@ try {
   const hud = await page.evaluate(() => ({
     age: document.getElementById('info-age')?.textContent?.trim(),
     season: document.getElementById('info-season')?.textContent?.trim(),
-    nodes: document.getElementById('info-nodes')?.textContent?.trim(),
+    vitality: document.getElementById('info-reserves')?.textContent?.trim(),
     status: document.getElementById('status')?.textContent?.trim(),
   }));
 
-  // Fresh / recovered sapling must not show HTML default age alone with empty meta
-  if (hud.season === '—' || hud.nodes === '—' || hud.nodes === '0') {
+  // Fresh / recovered sapling must not show HTML default placeholders
+  if (hud.age === '—' || hud.season === '—' || hud.vitality === '—') {
     throw new Error(`Boot left HTML-default HUD: ${JSON.stringify(hud)}`);
   }
   if (hud.status?.startsWith('Boot failed')) {

@@ -187,12 +187,30 @@ export function createWireMaterial(): THREE.MeshPhysicalMaterial {
   });
 }
 
+/**
+ * Soft warm-ink selection — attention without neon laser energy.
+ * Low-sat moss wash readable on dark bark and green pads.
+ */
 export function createHighlightMaterial(): THREE.MeshBasicMaterial {
   return new THREE.MeshBasicMaterial({
-    color: new THREE.Color('#b8ff8a'),
+    color: new THREE.Color('#8a7a5c'),
     transparent: true,
-    opacity: 0.4,
+    opacity: 0.32,
     depthTest: true,
+    depthWrite: false,
+    // Additive would read plastic; keep normal blend with thin overscale mesh
+  });
+}
+
+/** Optional thin ink rim companion (slightly cooler, lower opacity). */
+export function createHighlightRimMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#5c5348'),
+    transparent: true,
+    opacity: 0.22,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.BackSide,
   });
 }
 

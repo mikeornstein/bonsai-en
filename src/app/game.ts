@@ -4,6 +4,8 @@ import {
   environmentAt,
   formatAge,
   seasonLabel,
+  vitalityLevel,
+  vitalityWord,
   type SpeedMode,
 } from '../sim/time';
 import { createSapling, ensurePlayableTree } from '../sim/tree';
@@ -56,6 +58,9 @@ export class Game {
   private visualCooldownTimer = 0;
   private pendingVisual = false;
   private physicsNeedsSync = true;
+  private lastSeason: string | null = null;
+  private idleTimer = 0;
+  private statusUnfadeTimer = 0;
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -74,7 +79,9 @@ export class Game {
     }
     const species = getSpecies(this.tree.speciesId);
     this.physics = createPhysicsWorld(this.tree, { ...species.physics });
+    this.bindIdleChrome();
     this.refreshHud();
+    this.applySeasonVisuals();
     this.scene.markDirty();
     // Defer mesh build so HUD/buttons paint immediately
     requestAnimationFrame(() => {
@@ -140,6 +147,12 @@ export class Game {
   }
 
   private bindUi(): void {
+    // Debug meta (Nodes count) only with ?debug=1
+    const debug =
+      typeof window !== 'undefined' &&
+      new URLSearchParams(window.location.search).has('debug');
+    document.getElementById('info-nodes-row')?.classList.toggle('hidden', !debug);
+
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const tool = btn.dataset.tool as ToolMode;
@@ -155,24 +168,49 @@ export class Game {
       });
     });
 
+    const filesMenu = document.getElementById('files-menu');
+    const filesToggle = document.getElementById('btn-files');
+    const closeFiles = () => {
+      if (!filesMenu || !filesToggle) return;
+      filesMenu.hidden = true;
+      filesToggle.setAttribute('aria-expanded', 'false');
+    };
+    filesToggle?.addEventListener('click', (e) => {
+      e.stopPropagation();
+      if (!filesMenu || !filesToggle) return;
+      const open = filesMenu.hidden;
+      filesMenu.hidden = !open;
+      filesToggle.setAttribute('aria-expanded', open ? 'true' : 'false');
+    });
+    document.addEventListener('click', (e) => {
+      if (!(e.target instanceof Node)) return;
+      if (filesMenu && !filesMenu.contains(e.target) && e.target !== filesToggle) {
+        closeFiles();
+      }
+    });
+
     document.getElementById('btn-new')?.addEventListener('click', () => {
+      closeFiles();
       if (confirm('Start a new juniper sapling? Unsaved changes may be lost.')) {
         this.newSapling();
       }
     });
 
     document.getElementById('btn-save')?.addEventListener('click', () => {
+      closeFiles();
       saveLocal(this.tree);
       this.setStatus('Saved to this browser');
     });
 
     document.getElementById('btn-export')?.addEventListener('click', () => {
+      closeFiles();
       downloadTree(this.tree);
-      this.setStatus('Exported JSON');
+      this.setStatus('Exported');
     });
 
     const fileInput = document.getElementById('import-file') as HTMLInputElement;
     document.getElementById('btn-import')?.addEventListener('click', () => {
+      closeFiles();
       fileInput?.click();
     });
     fileInput?.addEventListener('change', async () => {
@@ -187,7 +225,7 @@ export class Game {
         this.syncPhysics();
         this.scene.markDirty();
         saveLocal(this.tree);
-        this.setStatus(`Imported ${file.name}`);
+        this.setStatus('Tree imported');
         this.refreshHud();
       } catch (e) {
         this.setStatus(`Import failed: ${(e as Error).message}`);
@@ -196,13 +234,32 @@ export class Game {
     });
 
     document.getElementById('btn-share')?.addEventListener('click', async () => {
+      closeFiles();
       const ok = await copyShareLink(this.tree);
       if (ok) {
-        this.setStatus('Share link copied to clipboard');
+        this.setStatus('Share link copied');
       } else {
         downloadTree(this.tree);
-        this.setStatus('Tree too large for URL — downloaded file instead');
+        this.setStatus('Tree too large for a link — file downloaded');
       }
+    });
+
+    document.getElementById('btn-mute')?.addEventListener('click', async () => {
+      closeFiles();
+      const audio = await import('../render/audio');
+      const muted = audio.toggleMute();
+      const btn = document.getElementById('btn-mute');
+      if (btn) btn.textContent = muted ? 'Sound off' : 'Sound on';
+      this.setStatus(muted ? 'Quiet' : 'Room tone on');
+    });
+
+    document.getElementById('btn-sumi')?.addEventListener('click', () => {
+      closeFiles();
+      const on = !this.scene.sumi.isEnabled();
+      this.scene.sumi.setEnabled(on);
+      this.setStatus(on ? 'Sumi practice · soft ink guide' : 'Free train');
+      const btn = document.getElementById('btn-sumi');
+      if (btn) btn.textContent = on ? 'Practice on' : 'Practice';
     });
 
     window.addEventListener('keydown', (e) => {
@@ -217,6 +274,7 @@ export class Game {
         e.preventDefault();
         this.setSpeed(this.speed === 'pause' ? 'live' : 'pause');
       }
+      if (key === 'escape') closeFiles();
     });
   }
 
@@ -286,7 +344,7 @@ export class Game {
     this.scene.setSelected(id);
 
     if (this.tool === 'inspect') {
-      this.setStatus(`Selected ${id}`);
+      this.setStatus('This branch');
     } else if (this.tool === 'prune') {
       const r = pruneAt(this.tree, id);
       this.setStatus(r.message);
@@ -295,6 +353,8 @@ export class Game {
         this.scene.setSelected(null);
         this.physicsNeedsSync = true;
         this.scene.markDirty();
+        this.scene.treeRenderer.pulseToolFeedback('prune');
+        void import('../render/audio').then((a) => a.playToolSound('prune'));
       }
     } else if (this.tool === 'pinch') {
       const r = pinchAt(this.tree, id);
@@ -302,12 +362,15 @@ export class Game {
       if (r.ok) {
         this.physicsNeedsSync = true;
         this.scene.markDirty();
+        this.scene.treeRenderer.pulseToolFeedback('pinch');
+        void import('../render/audio').then((a) => a.playToolSound('pinch'));
       }
     } else if (this.tool === 'wire') {
       const r = applyWire(this.tree, id);
       this.setStatus(r.message);
       this.physicsNeedsSync = true;
       this.scene.markDirty();
+      if (r.ok) void import('../render/audio').then((a) => a.playToolSound('wire'));
     } else if (this.tool === 'unwire') {
       const r = removeWire(this.tree, id);
       this.setStatus(r.message);
@@ -315,6 +378,7 @@ export class Game {
         this.physicsNeedsSync = true;
         resetJointElastic(this.physics, id);
         this.scene.markDirty();
+        void import('../render/audio').then((a) => a.playToolSound('unwire'));
       }
     }
 
@@ -327,13 +391,20 @@ export class Game {
       btn.classList.toggle('active', btn.dataset.tool === tool);
     });
     const hints: Record<ToolMode, string> = {
-      inspect: 'Tap a branch to inspect · Drag to orbit',
-      prune: 'Tap a branch to prune it and everything beyond',
-      pinch: 'Tap a tip to soft-pinch and encourage back-budding',
-      wire: 'Tap to wire, then drag to bend · Leave wire on while wood sets',
-      unwire: 'Tap a wired branch to remove wire (partial spring-back if unset)',
+      inspect: 'Tap a branch · Drag to orbit',
+      prune: 'Tap a branch to cut clean',
+      pinch: 'Tap a tip to pinch · laterals wake',
+      wire: 'Tap to wire, drag to bend · wood holds over time',
+      unwire: 'Tap wired wood to remove wire',
     };
     this.hintEl.textContent = hints[tool];
+    // Soft fade tool hints after a few seconds
+    window.setTimeout(() => {
+      if (this.tool === tool && this.hintEl.textContent === hints[tool]) {
+        this.hintEl.style.opacity = '0.35';
+      }
+    }, 4000);
+    this.hintEl.style.opacity = '0.85';
   }
 
   setSpeed(speed: SpeedMode): void {
@@ -354,6 +425,29 @@ export class Game {
 
   private setStatus(msg: string): void {
     this.statusEl.textContent = msg;
+    // Brief unfade when status fires during idle chrome
+    this.statusUnfadeTimer = 4;
+    document.getElementById('hud')?.classList.remove('idle-fade');
+  }
+
+  /** After ~30s idle, fade HUD; any input restores. */
+  private bindIdleChrome(): void {
+    const hud = document.getElementById('hud');
+    if (!hud) return;
+    const poke = () => {
+      this.idleTimer = 0;
+      hud.classList.remove('idle-fade');
+    };
+    for (const ev of ['pointerdown', 'pointermove', 'keydown', 'wheel', 'touchstart']) {
+      window.addEventListener(ev, poke, { passive: true });
+    }
+  }
+
+  private applySeasonVisuals(): void {
+    const env = environmentAt(this.tree.agePlantDays);
+    if (env.season === this.lastSeason) return;
+    this.lastSeason = env.season;
+    this.scene.applySeasonLook(env.season);
   }
 
   refreshHud(): void {
@@ -363,16 +457,28 @@ export class Game {
       this.tree.agePlantDays,
     );
     document.getElementById('info-season')!.textContent = seasonLabel(env.season);
-    document.getElementById('info-reserves')!.textContent =
-      this.tree.reserves.toFixed(1);
-    document.getElementById('info-nodes')!.textContent = String(
-      Object.keys(this.tree.nodes).length,
-    );
+
+    const reserves = this.tree.reserves;
+    const wordEl = document.getElementById('info-reserves');
+    if (wordEl) wordEl.textContent = vitalityWord(reserves);
+    const bar = document.getElementById('info-vitality-bar');
+    if (bar) {
+      const level = vitalityLevel(reserves);
+      bar.style.width = `${Math.round(level * 100)}%`;
+      bar.style.background =
+        level < 0.25 ? 'var(--danger)' : level < 0.45 ? '#a08a4a' : 'var(--accent)';
+    }
+
+    const nodesEl = document.getElementById('info-nodes');
+    if (nodesEl) {
+      nodesEl.textContent = String(Object.keys(this.tree.nodes).length);
+    }
+
     const sel = document.getElementById('info-selection')!;
     if (this.selected && this.tree.nodes[this.selected]) {
       sel.textContent = describeNode(this.tree, this.selected);
     } else {
-      sel.textContent = `${species.commonName} · select a branch`;
+      sel.textContent = `${species.commonName}`;
     }
   }
 
@@ -397,7 +503,16 @@ export class Game {
         this.pendingVisual = true;
         this.physicsNeedsSync = true;
         this.refreshHud();
+        this.applySeasonVisuals();
       }
+    }
+
+    // Idle chrome fade (~30s) — screenshot harness hard-hides via CSS class on body
+    this.idleTimer += dt;
+    if (this.statusUnfadeTimer > 0) {
+      this.statusUnfadeTimer -= dt;
+    } else if (this.idleTimer > 30) {
+      document.getElementById('hud')?.classList.add('idle-fade');
     }
 
     // Rebuild mesh at a capped rate during fast-forward (sim stays full-speed)

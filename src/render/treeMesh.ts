@@ -1,12 +1,13 @@
 import * as THREE from 'three';
 import { computeWorldFrames, type NodeWorld } from '../sim/tree';
-import type { Internode, NodeId, TreeState } from '../sim/types';
+import type { Internode, NodeId, Season, TreeState } from '../sim/types';
 import {
   barkMaterialForSegment,
   createBarkMaterial,
   createFoliageMaterial,
   createFoliageTipMaterial,
   createHighlightMaterial,
+  createHighlightRimMaterial,
   createWireMaterial,
 } from './materials';
 import { POT_SOIL_LOCAL_Y } from './pot';
@@ -57,10 +58,12 @@ export class TreeRenderer {
   private foliageTipMat: THREE.MeshPhysicalMaterial | null = null;
   private wireMat: THREE.MeshPhysicalMaterial | null = null;
   private highlightMat: THREE.MeshBasicMaterial | null = null;
+  private highlightRimMat: THREE.MeshBasicMaterial | null = null;
   private branchGroup = new THREE.Group();
   private foliageGroup = new THREE.Group();
   private wireGroup = new THREE.Group();
   private highlightMesh: THREE.Mesh | null = null;
+  private highlightRim: THREE.Mesh | null = null;
   private selectedId: NodeId | null = null;
   private scaleGeo: THREE.BufferGeometry | null = null;
   private radialSegments = 14;
@@ -72,12 +75,81 @@ export class TreeRenderer {
   private poseTree: TreeState | null = null;
   private matureFoliage: THREE.InstancedMesh | null = null;
   private tipFoliage: THREE.InstancedMesh | null = null;
+  /** Season drives tip flush color (Phase B). */
+  private season: Season = 'mainFlush';
+  private scarGroup = new THREE.Group();
+  private budGroup = new THREE.Group();
+  private scarMat: THREE.MeshStandardMaterial | null = null;
+  private budMat: THREE.MeshStandardMaterial | null = null;
+  private feedbackUntil = 0;
 
   readonly pickables: THREE.Object3D[] = [];
 
   constructor() {
     this.group.name = 'tree';
-    this.group.add(this.branchGroup, this.foliageGroup, this.wireGroup);
+    this.group.add(
+      this.branchGroup,
+      this.foliageGroup,
+      this.wireGroup,
+      this.scarGroup,
+      this.budGroup,
+    );
+  }
+
+  setSeason(season: Season): void {
+    if (this.season === season) return;
+    this.season = season;
+    this.applySeasonFoliageTint();
+  }
+
+  /** Brief visual pulse after prune/pinch — canopy settles; status is secondary. */
+  pulseToolFeedback(kind: 'prune' | 'pinch'): void {
+    this.feedbackUntil = performance.now() + (kind === 'prune' ? 150 : 100);
+    // Soft opacity dip on foliage reads as cut without confetti
+    if (this.foliageMat) {
+      this.foliageMat.opacity = 0.82;
+      this.foliageMat.transparent = true;
+    }
+    if (this.foliageTipMat) {
+      this.foliageTipMat.opacity = 0.78;
+      this.foliageTipMat.transparent = true;
+    }
+    window.setTimeout(() => {
+      if (performance.now() >= this.feedbackUntil) {
+        if (this.foliageMat) {
+          this.foliageMat.opacity = 1;
+          this.foliageMat.transparent = false;
+        }
+        if (this.foliageTipMat) {
+          this.foliageTipMat.opacity = 1;
+          this.foliageTipMat.transparent = false;
+        }
+      }
+    }, kind === 'prune' ? 160 : 110);
+  }
+
+  private applySeasonFoliageTint(): void {
+    if (!this.foliageMat || !this.foliageTipMat) return;
+    // Mature pad color stays evergreen; tips shift with flush
+    switch (this.season) {
+      case 'earlyFlush':
+      case 'mainFlush':
+        this.foliageTipMat.color.set('#6a9e4e');
+        this.foliageTipMat.sheenColor?.set('#9ccc68');
+        this.foliageMat.color.set('#3f6e38');
+        break;
+      case 'hardening':
+        this.foliageTipMat.color.set('#4a7a42');
+        this.foliageTipMat.sheenColor?.set('#6a9850');
+        this.foliageMat.color.set('#3a6634');
+        break;
+      case 'rest':
+      case 'dormant':
+        this.foliageTipMat.color.set('#3f6a3a');
+        this.foliageTipMat.sheenColor?.set('#5a7e48');
+        this.foliageMat.color.set('#385e34');
+        break;
+    }
   }
 
   private ensureMaterials(): void {
@@ -86,7 +158,23 @@ export class TreeRenderer {
     if (!this.foliageTipMat) this.foliageTipMat = createFoliageTipMaterial();
     if (!this.wireMat) this.wireMat = createWireMaterial();
     if (!this.highlightMat) this.highlightMat = createHighlightMaterial();
+    if (!this.highlightRimMat) this.highlightRimMat = createHighlightRimMaterial();
+    if (!this.scarMat) {
+      this.scarMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#3a2a22'),
+        roughness: 0.95,
+        metalness: 0,
+      });
+    }
+    if (!this.budMat) {
+      this.budMat = new THREE.MeshStandardMaterial({
+        color: new THREE.Color('#6a8a48'),
+        roughness: 0.7,
+        metalness: 0,
+      });
+    }
     if (!this.scaleGeo) this.scaleGeo = createScaleGeometry();
+    this.applySeasonFoliageTint();
   }
 
   setSelected(id: NodeId | null): void {
@@ -98,6 +186,8 @@ export class TreeRenderer {
     this.clearGroup(this.branchGroup);
     this.clearGroup(this.foliageGroup);
     this.clearGroup(this.wireGroup);
+    this.clearGroup(this.scarGroup);
+    this.clearGroup(this.budGroup);
     this.pickables.length = 0;
     this.poseHandles.clear();
     this.matureFoliage = null;
@@ -107,6 +197,11 @@ export class TreeRenderer {
       this.group.remove(this.highlightMesh);
       this.highlightMesh.geometry.dispose();
       this.highlightMesh = null;
+    }
+    if (this.highlightRim) {
+      this.group.remove(this.highlightRim);
+      this.highlightRim.geometry.dispose();
+      this.highlightRim = null;
     }
 
     const live = frames ?? computeWorldFrames(tree);
@@ -123,8 +218,17 @@ export class TreeRenderer {
       this.addBranchSegment(node.id, node, frame, tree);
       this.collectScales(node, frame, tree, scales);
       if (node.wire) {
-        this.addWireVisual(frame, Math.max(node.radius, MIN_VISUAL_RADIUS));
+        this.addWireVisual(
+          frame,
+          Math.max(node.radius, MIN_VISUAL_RADIUS),
+          node.wire.setAmount,
+          node.lignification,
+        );
       }
+      if (node.wound > 0.05) {
+        this.addScarVisual(frame, node);
+      }
+      this.addBudMarkers(node, frame);
     }
 
     // Soft cap for performance on large trees
@@ -148,15 +252,29 @@ export class TreeRenderer {
       const node = tree.nodes[this.selectedId];
       const frame = live.get(this.selectedId)!;
       if (node) {
-        const r = Math.max(node.radius, MIN_VISUAL_RADIUS) * 1.35;
+        const baseR = Math.max(node.radius, MIN_VISUAL_RADIUS);
+        // Soft moss wash — slight overscale, not neon tube
+        const r = baseR * 1.22;
         this.highlightMesh = this.makeTaperedSegment(
           r,
-          r * 0.9,
+          r * 0.88,
           frame,
           this.highlightMat!,
         );
         this.highlightMesh.userData.nodeId = this.selectedId;
+        this.highlightMesh.renderOrder = 2;
         this.group.add(this.highlightMesh);
+        // Thin ink rim (backside shell) for edge read on green pads
+        const rimR = baseR * 1.38;
+        this.highlightRim = this.makeTaperedSegment(
+          rimR,
+          rimR * 0.9,
+          frame,
+          this.highlightRimMat!,
+        );
+        this.highlightRim.userData.nodeId = this.selectedId;
+        this.highlightRim.renderOrder = 1;
+        this.group.add(this.highlightRim);
       }
     }
   }
@@ -176,9 +294,12 @@ export class TreeRenderer {
       }
     }
 
-    if (this.highlightMesh && this.selectedId) {
+    if (this.selectedId) {
       const frame = frames.get(this.selectedId);
-      if (frame) this.placeSegment(this.highlightMesh, frame);
+      if (frame) {
+        if (this.highlightMesh) this.placeSegment(this.highlightMesh, frame);
+        if (this.highlightRim) this.placeSegment(this.highlightRim, frame);
+      }
     }
 
     // Foliage follows host segments (rigid attachment in phase 1)
@@ -221,19 +342,33 @@ export class TreeRenderer {
     tree: TreeState,
   ): void {
     let r0 = this.visualRadius(node.radius);
-    // Nebari flare on root internode — stronger base so the trunk seats in soil
+    // Nebari flare on root + near-root — trunk seats in soil, not a pole in cake
     if (node.parentId === null) {
-      r0 *= 1.85;
+      r0 *= 2.35;
+    } else {
+      // Depth-aware taper boost for presentation
+      let depth = 0;
+      let p: NodeId | null = node.parentId;
+      while (p && depth < 6) {
+        depth += 1;
+        p = tree.nodes[p]?.parentId ?? null;
+      }
+      if (depth <= 1) r0 *= 1.35;
+      else if (depth === 2) r0 *= 1.12;
     }
-    let r1 = r0 * 0.82;
+    let r1 = r0 * 0.78;
     if (node.children.length) {
       let sum = 0;
       for (const c of node.children) {
         sum += this.visualRadius(tree.nodes[c]?.radius ?? node.radius * 0.7);
       }
-      r1 = sum / node.children.length;
+      r1 = Math.min(r0 * 0.92, (sum / node.children.length) * 1.05);
     } else {
-      r1 = r0 * 0.55;
+      r1 = r0 * 0.48;
+    }
+    // Stronger visual taper root→tip on long segments
+    if (node.length > 0.02 && node.parentId === null) {
+      r1 = Math.min(r1, r0 * 0.62);
     }
 
     const mat = barkMaterialForSegment(this.barkMat!, node.length, node.radius);
@@ -247,9 +382,10 @@ export class TreeRenderer {
       }
     } else {
       // Mature trunk: stronger normal, cooler tint
-      mat.color.offsetHSL(-0.02, -0.04, -0.03);
+      mat.color.offsetHSL(-0.03, -0.06, -0.04);
+      mat.roughness = Math.min(0.98, mat.roughness + 0.04);
       if (mat.normalScale) {
-        mat.normalScale.set(1.15, 1.15);
+        mat.normalScale.set(1.25, 1.25);
       }
     }
 
@@ -324,8 +460,8 @@ export class TreeRenderer {
   }
 
   /**
-   * Continuous juniper scale sleeves + tip pads (not sparse leaf clusters).
-   * Helical rings wrap the shoot so foliage reads as solid green volume.
+   * Juniper pad language: elliptical pad clouds with density falloff and
+   * intentional negative space — not per-internode bottle-brush confetti.
    */
   private collectScales(
     node: Internode,
@@ -334,14 +470,14 @@ export class TreeRenderer {
     out: ScaleInstance[],
   ): void {
     const isTip = node.children.length === 0;
-    // Bare structural wood — trunk / leaders show bark only
+    // Bare structural wood — trunk / thick leaders show bark only
     if (node.parentId === null) return;
-    if (!isTip && node.radius >= 0.0038) return;
-    if (!isTip && node.lignification > 0.55) return;
-    // Non-tips only if they still carry living foliage pads
+    if (!isTip && node.radius >= 0.0042) return;
+    if (!isTip && node.lignification > 0.6) return;
     if (!isTip && node.foliage.every((f) => !f.living)) return;
 
     const base = new THREE.Vector3(...frame.base);
+    const tip = new THREE.Vector3(...frame.tip);
     const dir = new THREE.Vector3(...frame.dir).normalize();
     const len = node.length;
     const r = this.visualRadius(node.radius);
@@ -353,97 +489,113 @@ export class TreeRenderer {
     const binormal = new THREE.Vector3().crossVectors(dir, sideRef).normalize();
     const normal = new THREE.Vector3().crossVectors(binormal, dir).normalize();
 
-    // Dense pad mass on tips; lighter wrap on thin green shoots only
-    const rings = isTip
-      ? Math.max(10, Math.floor(len / 0.0018))
-      : Math.max(4, Math.floor(len / 0.0032));
-    const perRing = isTip ? 13 : 8;
-    const layers = isTip ? 4 : 2;
-    const scaleBase = isTip ? 0.0026 : 0.0019;
-    const tipGrowth = isTip || node.lignification < 0.35;
-
-    for (let ring = 0; ring < rings; ring++) {
-      const t = (ring + 0.5) / rings;
-      // Slightly denser toward tip
-      const densify = 0.75 + t * 0.45;
-      const along = base.clone().addScaledVector(dir, t * len);
-      const ringTwist = t * 2.4 + node.ageDays * 0.01;
-
-      for (let layer = 0; layer < layers; layer++) {
-        const nAround = Math.max(6, Math.floor(perRing * densify) - layer * 2);
-        for (let k = 0; k < nAround; k++) {
-          const ang = ringTwist + (k / nAround) * Math.PI * 2 + layer * 0.4;
-          const cos = Math.cos(ang);
-          const sin = Math.sin(ang);
-          const spin = new THREE.Vector3(
-            normal.x * cos + binormal.x * sin,
-            normal.y * cos + binormal.y * sin,
-            normal.z * cos + binormal.z * sin,
-          ).normalize();
-
-          const radialOff = r + scaleBase * (0.35 + layer * 0.55);
-          const pos = along
-            .clone()
-            .addScaledVector(spin, radialOff)
-            .addScaledVector(dir, (k % 3) * scaleBase * 0.04);
-
-          // Scales wrap tightly around the axis
-          const face = spin
-            .clone()
-            .multiplyScalar(0.92)
-            .addScaledVector(dir, 0.12 + layer * 0.05)
-            .normalize();
-
-          const quat = new THREE.Quaternion().setFromUnitVectors(
-            new THREE.Vector3(0, 0, 1),
-            face,
-          );
-          quat.multiply(
-            new THREE.Quaternion().setFromAxisAngle(
-              new THREE.Vector3(0, 0, 1),
-              ang * 0.6 + layer * 0.3,
-            ),
-          );
-
-          const sc = scaleBase * (0.85 + (k % 4) * 0.05) * (1 - layer * 0.08);
-          out.push({
-            position: pos,
-            quaternion: quat,
-            scale: new THREE.Vector3(sc, sc * 1.2, sc),
-            tip: tipGrowth && t > 0.55,
-          });
-        }
+    // Prefer fewer, larger pad volumes over dense wrong scales
+    const padCenters: Array<{ t: number; side: number; elev: number }> = [];
+    if (isTip) {
+      // One primary tip pad + optional small secondary for silhouette gaps
+      padCenters.push({ t: 0.72, side: 0, elev: 0.15 });
+      if (len > 0.012) padCenters.push({ t: 0.42, side: 0.55, elev: -0.1 });
+      if (len > 0.022) padCenters.push({ t: 0.55, side: -0.65, elev: 0.05 });
+    } else {
+      // Sparse mid-shoot pads only where living foliage clusters exist
+      const living = node.foliage.filter((f) => f.living);
+      const nPads = Math.min(2, Math.max(1, living.length));
+      for (let i = 0; i < nPads; i++) {
+        const f = living[i] ?? living[0];
+        padCenters.push({
+          t: f?.t ?? 0.5,
+          side: Math.sin(f?.azimuth ?? i) * 0.4,
+          elev: Math.cos((f?.azimuth ?? i) * 1.3) * 0.2,
+        });
       }
     }
 
-    // Tip pad cloud — soft conical mass of overlapping scales
+    const tipGrowth =
+      isTip ||
+      node.lignification < 0.35 ||
+      this.season === 'earlyFlush' ||
+      this.season === 'mainFlush';
+
+    for (let pi = 0; pi < padCenters.length; pi++) {
+      const pad = padCenters[pi];
+      const center = base
+        .clone()
+        .addScaledVector(dir, pad.t * len)
+        .addScaledVector(normal, pad.side * r * 2.2)
+        .addScaledVector(binormal, pad.elev * r * 1.6);
+
+      // Elliptical pad cloud — denser core, soft falloff edge
+      const count = isTip ? (pi === 0 ? 36 : 18) : 14;
+      const rx = isTip ? 0.0065 + r * 1.8 : 0.0042 + r * 1.2;
+      const ry = isTip ? 0.0042 + r * 1.1 : 0.0028 + r * 0.8;
+      const rz = isTip ? 0.0055 + r * 1.4 : 0.0035 + r * 1.0;
+      const scaleBase = isTip ? 0.0032 : 0.0022;
+
+      for (let i = 0; i < count; i++) {
+        // Deterministic quasi-uniform in unit ball shell
+        const u = (i + 0.5) / count;
+        const ang = u * Math.PI * 2 * 2.7 + pi * 1.7 + node.ageDays * 0.02;
+        const elev = Math.asin(2 * ((i * 0.618) % 1) - 1);
+        const fall = 0.25 + 0.75 * ((i * 7) % 10) / 10;
+        const cosE = Math.cos(elev);
+        const ox = Math.cos(ang) * cosE * rx * fall;
+        const oy = Math.sin(elev) * ry * fall;
+        const oz = Math.sin(ang) * cosE * rz * fall;
+
+        const spin = new THREE.Vector3(
+          normal.x * ox + binormal.x * oz + dir.x * oy,
+          normal.y * ox + binormal.y * oz + dir.y * oy,
+          normal.z * ox + binormal.z * oz + dir.z * oy,
+        );
+        const pos = center.clone().add(spin);
+
+        const face = spin
+          .clone()
+          .normalize()
+          .multiplyScalar(0.55)
+          .addScaledVector(dir, 0.45)
+          .normalize();
+        if (face.lengthSq() < 1e-6) face.copy(dir);
+
+        const quat = new THREE.Quaternion().setFromUnitVectors(
+          new THREE.Vector3(0, 0, 1),
+          face,
+        );
+        const edge = fall;
+        const sc = scaleBase * (0.75 + (1 - edge) * 0.45) * (0.9 + (i % 3) * 0.06);
+        const isTipScale =
+          tipGrowth && (isTip ? pad.t > 0.5 || pi === 0 : false) && fall < 0.75;
+
+        out.push({
+          position: pos,
+          quaternion: quat,
+          scale: new THREE.Vector3(sc * 1.15, sc * 1.35, sc),
+          tip: isTipScale,
+        });
+      }
+    }
+
+    // Tiny tip apex cloud for silhouette read at thumbnail size
     if (isTip) {
-      const tip = new THREE.Vector3(...frame.tip);
-      for (let i = 0; i < 48; i++) {
-        const u = i / 48;
-        const ang = u * Math.PI * 2 * 3.2;
-        const elev = (i % 8) / 8;
+      for (let i = 0; i < 12; i++) {
+        const ang = (i / 12) * Math.PI * 2;
+        const elev = (i % 4) / 4;
         const spin2 = new THREE.Vector3(
           normal.x * Math.cos(ang) + binormal.x * Math.sin(ang),
           normal.y * Math.cos(ang) + binormal.y * Math.sin(ang),
           normal.z * Math.cos(ang) + binormal.z * Math.sin(ang),
         ).normalize();
-        const face = spin2
-          .clone()
-          .multiplyScalar(0.5 + elev * 0.2)
-          .addScaledVector(dir, 0.7 - elev * 0.15)
-          .normalize();
-        const sc = 0.0016 + (i % 5) * 0.00015;
+        const sc = 0.002 + (i % 3) * 0.0002;
         out.push({
           position: tip
             .clone()
-            .addScaledVector(dir, 0.0004 + elev * 0.0022)
-            .addScaledVector(spin2, r * 0.35 + elev * 0.002),
+            .addScaledVector(dir, 0.0006 + elev * 0.0018)
+            .addScaledVector(spin2, r * 0.4 + elev * 0.0015),
           quaternion: new THREE.Quaternion().setFromUnitVectors(
             new THREE.Vector3(0, 0, 1),
-            face,
+            spin2.clone().multiplyScalar(0.4).addScaledVector(dir, 0.8).normalize(),
           ),
-          scale: new THREE.Vector3(sc, sc * 1.25, sc),
+          scale: new THREE.Vector3(sc, sc * 1.3, sc),
           tip: true,
         });
       }
@@ -508,7 +660,16 @@ export class TreeRenderer {
     return mesh;
   }
 
-  private addWireVisual(frame: NodeWorld, radius: number): void {
+  /**
+   * Training wire — dulls as setAmount rises (visual lignify cue).
+   * setAmount 0 = bright training metal; 1 = dull held wood.
+   */
+  private addWireVisual(
+    frame: NodeWorld,
+    radius: number,
+    setAmount = 0,
+    lignification = 0,
+  ): void {
     const points: THREE.Vector3[] = [];
     const base = new THREE.Vector3(...frame.base);
     const tip = new THREE.Vector3(...frame.tip);
@@ -536,10 +697,88 @@ export class TreeRenderer {
       );
     }
     const curve = new THREE.CatmullRomCurve3(points);
-    const geo = new THREE.TubeGeometry(curve, segs, 0.00055, 6, false);
-    const mesh = new THREE.Mesh(geo, this.wireMat!);
+    // Slightly thinner as set progresses (wire less dominant when wood holds)
+    const tubeR = 0.00055 * (1 - setAmount * 0.25);
+    const geo = new THREE.TubeGeometry(curve, segs, tubeR, 6, false);
+    const mat = this.wireMat!.clone();
+    // Dull aluminum → dark oxidized as set progresses
+    const dull = Math.max(setAmount, lignification * 0.35);
+    mat.color.setRGB(
+      0.69 - dull * 0.28,
+      0.63 - dull * 0.22,
+      0.56 - dull * 0.12,
+    );
+    mat.metalness = 0.84 - dull * 0.45;
+    mat.roughness = 0.45 + dull * 0.4;
+    mat.envMapIntensity = 0.85 - dull * 0.5;
+    const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
+    mesh.userData.disposeMat = true;
     this.wireGroup.add(mesh);
+  }
+
+  /** Cut scar — dark when fresh (high wound), fades as wound decays. */
+  private addScarVisual(frame: NodeWorld, node: Internode): void {
+    const tip = new THREE.Vector3(...frame.tip);
+    const dir = new THREE.Vector3(...frame.dir).normalize();
+    const r = this.visualRadius(node.radius) * (0.9 + node.wound * 0.4);
+    const mat = this.scarMat!.clone();
+    // Fresh cut: redder/darker; healed: cooler charcoal
+    const w = node.wound;
+    mat.color.setRGB(0.22 + w * 0.2, 0.12 + w * 0.05, 0.1);
+    mat.roughness = 0.9 - w * 0.1;
+    const disc = new THREE.Mesh(
+      new THREE.CircleGeometry(r, 12),
+      mat,
+    );
+    disc.position.copy(tip).addScaledVector(dir, 0.0002);
+    disc.quaternion.setFromUnitVectors(new THREE.Vector3(0, 0, 1), dir);
+    disc.userData.disposeMat = true;
+    this.scarGroup.add(disc);
+  }
+
+  /** Pre-break bud swell when breakForce is high. */
+  private addBudMarkers(node: Internode, frame: NodeWorld): void {
+    const base = new THREE.Vector3(...frame.base);
+    const dir = new THREE.Vector3(...frame.dir).normalize();
+    const r = this.visualRadius(node.radius);
+    const sideRef =
+      Math.abs(dir.y) > 0.9
+        ? new THREE.Vector3(1, 0, 0)
+        : new THREE.Vector3(0, 1, 0);
+    const binormal = new THREE.Vector3().crossVectors(dir, sideRef).normalize();
+    const normal = new THREE.Vector3().crossVectors(binormal, dir).normalize();
+
+    for (const bud of node.buds) {
+      if (bud.state === 'dead') continue;
+      // Only show swell when stimulus is legible
+      if (bud.breakForce < 0.35 && bud.state !== 'flushing') continue;
+      const force = Math.min(1.2, bud.breakForce);
+      const size = 0.00055 + force * 0.0011;
+      const ang = bud.azimuth;
+      const spin = new THREE.Vector3(
+        normal.x * Math.cos(ang) + binormal.x * Math.sin(ang),
+        normal.y * Math.cos(ang) + binormal.y * Math.sin(ang),
+        normal.z * Math.cos(ang) + binormal.z * Math.sin(ang),
+      ).normalize();
+      const mat = this.budMat!.clone();
+      if (bud.state === 'flushing') {
+        mat.color.set('#7aaa50');
+      } else {
+        // Rising potential: warmer green as force rises
+        mat.color.setRGB(0.35 + force * 0.15, 0.5 + force * 0.12, 0.28);
+      }
+      const sphere = new THREE.Mesh(
+        new THREE.SphereGeometry(size, 8, 6),
+        mat,
+      );
+      sphere.position
+        .copy(base)
+        .addScaledVector(dir, bud.t * node.length)
+        .addScaledVector(spin, r + size * 0.6);
+      sphere.userData.disposeMat = true;
+      this.budGroup.add(sphere);
+    }
   }
 
   private clearGroup(g: THREE.Group): void {
@@ -549,6 +788,9 @@ export class TreeRenderer {
     if (this.foliageTipMat) sharedMats.add(this.foliageTipMat);
     if (this.wireMat) sharedMats.add(this.wireMat);
     if (this.highlightMat) sharedMats.add(this.highlightMat);
+    if (this.highlightRimMat) sharedMats.add(this.highlightRimMat);
+    if (this.scarMat) sharedMats.add(this.scarMat);
+    if (this.budMat) sharedMats.add(this.budMat);
     while (g.children.length) {
       const c = g.children.pop()!;
       if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) {
@@ -577,5 +819,10 @@ export class TreeRenderer {
     this.foliageTipMat?.dispose();
     this.wireMat?.dispose();
     this.highlightMat?.dispose();
+    this.highlightRimMat?.dispose();
+    this.scarMat?.dispose();
+    this.budMat?.dispose();
+    this.clearGroup(this.scarGroup);
+    this.clearGroup(this.budGroup);
   }
 }

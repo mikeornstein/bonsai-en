@@ -4,7 +4,6 @@ import { environmentAt } from './time';
 import {
   addAxillaryBud,
   extendFromBud,
-  getSubtreeIds,
   totalFoliageArea,
   totalWoodyVolume,
 } from './tree';
@@ -404,9 +403,23 @@ export function subtreeLeafArea(tree: TreeState, nodeId: string): number {
 export function describeNode(tree: TreeState, nodeId: string): string {
   const n = tree.nodes[nodeId];
   if (!n) return '—';
-  const kids = getSubtreeIds(tree, nodeId).size - 1;
-  const wire = n.wire
-    ? ` · wire ${(n.wire.setAmount * 100).toFixed(0)}% set`
-    : '';
-  return `${(n.radius * 2000).toFixed(1)} mm Ø · ${(n.length * 100).toFixed(1)} cm · ${kids} distal${wire}`;
+  // Physical, sparse — no raw node IDs
+  const wood =
+    n.lignification > 0.7
+      ? 'old wood'
+      : n.lignification > 0.35
+        ? 'setting wood'
+        : 'young wood';
+  const parts = [wood];
+  if (n.wire) {
+    parts.push(
+      n.wire.setAmount > 0.85 ? 'wire set' : n.wire.setAmount > 0.35 ? 'wiring' : 'fresh wire',
+    );
+  }
+  if (n.wound > 0.4) parts.push('fresh cut');
+  else if (n.wound > 0.1) parts.push('healing');
+  const flushing = n.buds.some((b) => b.state === 'flushing' || b.breakForce > 0.55);
+  if (flushing) parts.push('buds waking');
+  if (n.children.length === 0) parts.push('tip');
+  return parts.join(' · ');
 }

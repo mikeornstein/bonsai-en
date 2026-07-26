@@ -156,6 +156,98 @@ function createSoilMoundGeometry(): THREE.LatheGeometry {
   return geo;
 }
 
+/**
+ * Composed bonsai dressing: size hierarchy + light clustering.
+ * Larger stones near rim/corners; finer grit near trunk; sparse moss hints.
+ */
+function placeComposedGrit(group: THREE.Group, gritMat: THREE.MeshStandardMaterial): void {
+  const gritColors = [
+    new THREE.Color('#8a6a50'),
+    new THREE.Color('#6a6258'),
+    new THREE.Color('#a89070'),
+    new THREE.Color('#5a544c'),
+    new THREE.Color('#b0a090'),
+    new THREE.Color('#7a7060'),
+    new THREE.Color('#9a8a72'),
+  ];
+  const mossColor = new THREE.Color('#5a6e48');
+
+  type Spec = { ang: number; rad: number; size: number; moss?: boolean };
+  const specs: Spec[] = [];
+
+  // Rim / corner accent stones (larger)
+  for (let i = 0; i < 10; i++) {
+    const ang = (i / 10) * Math.PI * 2 + 0.31 + (i % 3) * 0.07;
+    const rad = 0.068 + ((i * 5) % 7) * 0.0018;
+    const size = 0.0032 + ((i * 3) % 4) * 0.00045;
+    specs.push({ ang, rad, size });
+  }
+
+  // Mid-band medium clusters (3 loose clusters)
+  for (let c = 0; c < 3; c++) {
+    const cAng = (c / 3) * Math.PI * 2 + 0.9;
+    const cRad = 0.038 + c * 0.006;
+    for (let j = 0; j < 5; j++) {
+      const ang = cAng + (j - 2) * 0.14 + ((c + j) % 2) * 0.05;
+      const rad = cRad + ((j * 7 + c) % 5) * 0.0022 - 0.004;
+      const size = 0.002 + ((j * 4 + c) % 4) * 0.00035;
+      specs.push({ ang, rad: Math.max(0.018, Math.min(0.072, rad)), size });
+    }
+  }
+
+  // Fine near-trunk grit (avoids cake-sprinkle even field)
+  for (let i = 0; i < 18; i++) {
+    const ang = (i / 18) * Math.PI * 2 + 0.17 + ((i * 11) % 5) * 0.04;
+    const rad = 0.012 + ((i * 13) % 9) * 0.0016;
+    const size = 0.0011 + ((i * 7) % 4) * 0.00022;
+    specs.push({ ang, rad, size });
+  }
+
+  // Sparse intentional moss hints (not random candy green)
+  const mossSpots: Array<[number, number]> = [
+    [1.1, 0.055],
+    [3.4, 0.048],
+    [5.2, 0.062],
+  ];
+  for (const [ang, rad] of mossSpots) {
+    specs.push({ ang, rad, size: 0.0024, moss: true });
+  }
+
+  for (let i = 0; i < specs.length; i++) {
+    const { ang, rad, size, moss } = specs[i];
+    if (rad > 0.084 || rad < 0.01) continue;
+    const stone = new THREE.Mesh(
+      new THREE.IcosahedronGeometry(size, 1),
+      gritMat.clone(),
+    );
+    const mat = stone.material as THREE.MeshStandardMaterial;
+    if (moss) {
+      mat.color.copy(mossColor);
+      mat.roughness = 0.98;
+    } else {
+      mat.color.copy(gritColors[i % gritColors.length]);
+      mat.roughness = 0.88 + (i % 4) * 0.03;
+    }
+    const elev = (1 - (rad / 0.09) ** 2) * 0.0038;
+    // Embed slightly so grit doesn't float
+    stone.position.set(
+      Math.cos(ang) * rad,
+      POT_SOIL_LOCAL_Y + elev + size * 0.12,
+      Math.sin(ang) * rad,
+    );
+    stone.rotation.set(i * 0.7, i * 1.1, i * 0.4);
+    stone.scale.set(
+      1 + (i % 3) * 0.08,
+      moss ? 0.55 : 0.82 + (i % 4) * 0.05,
+      1 + ((i + 1) % 3) * 0.07,
+    );
+    stone.castShadow = false;
+    stone.receiveShadow = true;
+    stone.name = moss ? 'mossHint' : 'grit';
+    group.add(stone);
+  }
+}
+
 export function createPotGroup(): THREE.Group {
   const group = new THREE.Group();
   group.name = 'pot';
@@ -228,48 +320,9 @@ export function createPotGroup(): THREE.Group {
   mound.castShadow = false;
   group.add(mound);
 
-  // Grit stones — rounded pebbles slightly embedded into soil
-  const gritColors = [
-    new THREE.Color('#8a6a50'),
-    new THREE.Color('#6a6258'),
-    new THREE.Color('#a89070'),
-    new THREE.Color('#5a544c'),
-    new THREE.Color('#b0a090'),
-    new THREE.Color('#7a7060'),
-  ];
-  const gritCount = 48;
-  for (let i = 0; i < gritCount; i++) {
-    const ang = (i / gritCount) * Math.PI * 2 + (i % 7) * 0.17;
-    const rad = 0.012 + ((i * 17) % 12) * 0.005;
-    if (rad > 0.082) continue;
-    const size = 0.0015 + ((i * 13) % 5) * 0.00075;
-    const stone = new THREE.Mesh(
-      new THREE.IcosahedronGeometry(size, 1),
-      gritMat.clone(),
-    );
-    (stone.material as THREE.MeshStandardMaterial).color.copy(
-      gritColors[i % gritColors.length],
-    );
-    (stone.material as THREE.MeshStandardMaterial).roughness =
-      0.88 + (i % 4) * 0.03;
-    const elev = (1 - (rad / 0.088) ** 2) * 0.0038;
-    stone.position.set(
-      Math.cos(ang) * rad,
-      POT_SOIL_LOCAL_Y + elev + size * 0.15,
-      Math.sin(ang) * rad,
-    );
-    stone.rotation.set(i * 0.7, i * 1.1, i * 0.4);
-    // Mild, near-spherical — avoid flat ovals from top view
-    stone.scale.set(
-      1 + (i % 3) * 0.1,
-      0.85 + (i % 4) * 0.06,
-      1 + ((i + 1) % 3) * 0.08,
-    );
-    // Grit: receive only — dozens of tiny casters thrash soft shadow maps
-    stone.castShadow = false;
-    stone.receiveShadow = true;
-    group.add(stone);
-  }
+  // Grit — designed surface: large edge stones, medium mid, fine near trunk.
+  // Seed-stable placement (fixed formula, no Math.random).
+  placeComposedGrit(group, gritMat);
 
   // Three short ceramic feet: bottoms on pedestal (y=0)
   const footMat = potMat.clone();
@@ -334,7 +387,8 @@ export function createPotGroup(): THREE.Group {
 }
 
 /**
- * Seamless pale studio floor + short stone pedestal.
+ * Finite room stage: soft plaster/washi wall + floor mat + short pedestal.
+ * Quiet negative space; tree remains hero (backdrop ~1 stop quieter).
  * Pot/tree are raised by PEDESTAL_HEIGHT in the scene stage.
  */
 export function createStudioBase(): THREE.Group {
@@ -344,8 +398,9 @@ export function createStudioBase(): THREE.Group {
   const groundMat = createGroundMaterial();
   const pedestalMat = createPedestalMaterial();
 
+  // Finite floor mat (not infinite product disc) — soft plaster / linen
   const ground = new THREE.Mesh(
-    new THREE.CircleGeometry(2.4, 96),
+    new THREE.CircleGeometry(0.95, 80),
     groundMat,
   );
   ground.rotation.x = -Math.PI / 2;
@@ -353,6 +408,58 @@ export function createStudioBase(): THREE.Group {
   ground.receiveShadow = true;
   ground.name = 'ground';
   group.add(ground);
+
+  // Soft falloff ring beyond the mat (reads as room floor edge, not void cliff)
+  {
+    const ringCanvas = document.createElement('canvas');
+    ringCanvas.width = ringCanvas.height = 128;
+    const rctx = ringCanvas.getContext('2d')!;
+    const rg = rctx.createRadialGradient(64, 64, 40, 64, 64, 64);
+    rg.addColorStop(0, 'rgba(200, 194, 184, 0.55)');
+    rg.addColorStop(0.55, 'rgba(190, 184, 174, 0.22)');
+    rg.addColorStop(1, 'rgba(180, 174, 164, 0)');
+    rctx.fillStyle = rg;
+    rctx.fillRect(0, 0, 128, 128);
+    const ringTex = new THREE.CanvasTexture(ringCanvas);
+    ringTex.colorSpace = THREE.SRGBColorSpace;
+    const ring = new THREE.Mesh(
+      new THREE.CircleGeometry(1.55, 64),
+      new THREE.MeshBasicMaterial({
+        map: ringTex,
+        transparent: true,
+        depthWrite: false,
+        opacity: 0.85,
+      }),
+    );
+    ring.rotation.x = -Math.PI / 2;
+    ring.position.y = -0.0004;
+    ring.name = 'floorFalloff';
+    group.add(ring);
+  }
+
+  // Soft plaster/washi back wall — tokonoma shelf feel, 1-stop quieter
+  {
+    const wallMat = new THREE.MeshStandardMaterial({
+      color: new THREE.Color('#d8d4cc'),
+      roughness: 0.96,
+      metalness: 0,
+      envMapIntensity: 0.08,
+    });
+    const wall = new THREE.Mesh(new THREE.PlaneGeometry(1.8, 1.15), wallMat);
+    wall.position.set(0, 0.42, -0.72);
+    wall.receiveShadow = true;
+    wall.castShadow = false;
+    wall.name = 'roomWall';
+    group.add(wall);
+
+    // Soft corner return (left) — finite stage, not cyclorama
+    const side = new THREE.Mesh(new THREE.PlaneGeometry(0.9, 1.15), wallMat);
+    side.position.set(-0.78, 0.42, -0.28);
+    side.rotation.y = Math.PI * 0.42;
+    side.receiveShadow = true;
+    side.name = 'roomWallSide';
+    group.add(side);
+  }
 
   // Soft contact shadow under pedestal
   const contactCanvas = document.createElement('canvas');
