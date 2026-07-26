@@ -452,8 +452,11 @@ export class Game {
       if (ok) {
         this.setStatus('Share link copied');
       } else {
+        // Link capacity exceeded — fall back to full JSON (same as Export)
         downloadTree(this.tree);
-        this.setStatus('Tree too large for a link — file downloaded');
+        this.setStatus(
+          'Tree too large for a share link — file exported (use Export for full saves anytime)',
+        );
       }
     });
 

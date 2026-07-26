@@ -1,7 +1,12 @@
 import type { TreeState } from './types';
 
+/**
+ * File / autosave schema version. Share links use a separate compact transport
+ * (see src/share/compact.ts) that always unpacks back to this schema.
+ */
 export const SCHEMA_VERSION = 1 as const;
 
+/** Full-fidelity JSON for files, autosave, and Export. */
 export function serializeTree(tree: TreeState): string {
   return JSON.stringify(tree);
 }
