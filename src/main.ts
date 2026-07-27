@@ -46,6 +46,13 @@ export interface BonsaiHarness {
   setDofEnabled(on: boolean): void;
   getDofEnabled(): boolean;
   newSapling(): void;
+  /**
+   * Fit whole tree in view and release user-owned framing until the next orbit/zoom.
+   * Growth ticks alone never reframe after the player moves the camera (#60).
+   */
+  frameTree(): void;
+  /** True after player orbit/zoom this session (auto-fit gated). */
+  isCameraUserOwned(): boolean;
   /** Practice (sumi + grade) on/off. Default on; persists as bonsai-en:mode. */
   setSumiChallenge(on: boolean): void;
   setMuted(on: boolean): void;
@@ -121,6 +128,12 @@ try {
     },
     newSapling() {
       game.newSapling();
+    },
+    frameTree() {
+      game.frameCamera();
+    },
+    isCameraUserOwned() {
+      return game.scene.isCameraUserOwned();
     },
     setSumiChallenge(on: boolean) {
       // Shared path with menu: updates ghost, status, button, localStorage
