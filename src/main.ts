@@ -27,6 +27,19 @@ function showBootError(err: unknown): void {
 export interface BonsaiHarness {
   setView(view: CameraViewName): void;
   getView(): CameraViewName;
+  /**
+   * Perspective close-up on a soil-local point (same space as listNodes tips).
+   * Freezes physics. Prefer for detail plates 10–15.
+   */
+  setCloseUp(opts: {
+    x: number;
+    y: number;
+    z: number;
+    distance?: number;
+    azimuth?: number;
+    elevation?: number;
+    fov?: number;
+  }): void;
   setUiVisible(visible: boolean): void;
   setPhysicsFrozen(frozen: boolean): void;
   /** Product-GPU DOF A/B. No-op when soft GL skipped the post stack. */
@@ -89,6 +102,10 @@ try {
     },
     getView() {
       return game.scene.getView();
+    },
+    setCloseUp(opts) {
+      game.setPhysicsFrozen(true);
+      game.scene.setCloseUp(opts);
     },
     setUiVisible(visible: boolean) {
       document.body.classList.toggle('screenshot-hide-ui', !visible);

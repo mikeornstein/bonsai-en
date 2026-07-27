@@ -141,19 +141,52 @@ function createSoilGeometry(): THREE.BufferGeometry {
 /** Soft mound around trunk base so nebari seats in soil. */
 function createSoilMoundGeometry(): THREE.LatheGeometry {
   const pts: THREE.Vector2[] = [];
-  const R = 0.02;
-  const y0 = POT_SOIL_LOCAL_Y - 0.0004;
-  for (let i = 0; i <= 12; i++) {
-    const t = i / 12;
+  // Wider / slightly taller to hug flared nebari without a hard soil disc cut
+  const R = 0.028;
+  const y0 = POT_SOIL_LOCAL_Y - 0.0006;
+  for (let i = 0; i <= 14; i++) {
+    const t = i / 14;
     const r = R * (1 - t);
-    const h = Math.cos(t * Math.PI * 0.5) * 0.005;
+    // Soft crown that peaks off-center so trunk flare sinks cleanly
+    const h = Math.cos(t * Math.PI * 0.5) * 0.0062 * (0.85 + 0.15 * (1 - t));
     pts.push(new THREE.Vector2(Math.max(0.0003, r), y0 + h));
   }
   pts.push(new THREE.Vector2(0.0003, y0));
   pts.push(new THREE.Vector2(R, y0));
-  const geo = new THREE.LatheGeometry(pts, 36);
+  const geo = new THREE.LatheGeometry(pts, 40);
   geo.computeVertexNormals();
   return geo;
+}
+
+/** Soft contact shadow under trunk on soil — no hard ink blot. */
+function createTrunkContactShadow(): THREE.Mesh {
+  const c = document.createElement('canvas');
+  c.width = c.height = 64;
+  const ctx = c.getContext('2d')!;
+  const g = ctx.createRadialGradient(32, 32, 2, 32, 32, 30);
+  g.addColorStop(0, 'rgba(32, 26, 20, 0.38)');
+  g.addColorStop(0.35, 'rgba(32, 26, 20, 0.14)');
+  g.addColorStop(0.75, 'rgba(32, 26, 20, 0.04)');
+  g.addColorStop(1, 'rgba(32, 26, 20, 0)');
+  ctx.fillStyle = g;
+  ctx.fillRect(0, 0, 64, 64);
+  const tex = new THREE.CanvasTexture(c);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  const mat = new THREE.MeshBasicMaterial({
+    map: tex,
+    transparent: true,
+    depthWrite: false,
+    opacity: 0.85,
+    polygonOffset: true,
+    polygonOffsetFactor: -1,
+    polygonOffsetUnits: -1,
+  });
+  const mesh = new THREE.Mesh(new THREE.CircleGeometry(0.022, 32), mat);
+  mesh.name = 'trunkContactShadow';
+  mesh.rotation.x = -Math.PI / 2;
+  mesh.position.set(0, POT_SOIL_LOCAL_Y + 0.00015, 0);
+  mesh.renderOrder = 1;
+  return mesh;
 }
 
 /**
@@ -319,6 +352,9 @@ export function createPotGroup(): THREE.Group {
   mound.receiveShadow = true;
   mound.castShadow = false;
   group.add(mound);
+
+  // Soft trunk contact on soil (AO-like, no ink blot)
+  group.add(createTrunkContactShadow());
 
   // Grit — designed surface: large edge stones, medium mid, fine near trunk.
   // Seed-stable placement (fixed formula, no Math.random).

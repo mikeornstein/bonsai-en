@@ -75,10 +75,15 @@ export interface NodeSummary {
   radius: number;
   lignification: number;
   wireSetAmount: number | null;
+  childCount: number;
   /** Soil-local tip position (for practice targeting / automation). */
   tipX: number;
   tipY: number;
   tipZ: number;
+  /** Soil-local base (joint) position. */
+  baseX: number;
+  baseY: number;
+  baseZ: number;
 }
 
 export interface PerfSample {
@@ -267,6 +272,7 @@ export class Game {
     return Object.values(this.tree.nodes).map((n) => {
       const f = frames.get(n.id);
       const tip = f?.tip ?? [0, 0, 0];
+      const base = f?.base ?? [0, 0, 0];
       return {
         id: n.id,
         parentId: n.parentId,
@@ -277,9 +283,13 @@ export class Game {
         radius: n.radius,
         lignification: n.lignification,
         wireSetAmount: n.wire ? n.wire.setAmount : null,
+        childCount: n.children.length,
         tipX: tip[0],
         tipY: tip[1],
         tipZ: tip[2],
+        baseX: base[0],
+        baseY: base[1],
+        baseZ: base[2],
       };
     });
   }
