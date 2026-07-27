@@ -220,7 +220,7 @@ npm run playtest     # → playtest-reports/latest.md + shots (gitignored)
 
 Hard scenario failures exit non-zero. Soft findings (playability, SwiftShader perf) land in the report. Harness API: `window.__bonsai.getSnapshot()`, `act(tool, nodeId)`, `setSpeed`, `listNodes`, `getPerf`, `getPracticeScore()`.
 
-**Practice (sumi) mode:** toggle via UI or `setSumiChallenge(true)`. Score with `getPracticeScore()` (containment, band fit, centerline, height). Deep dive: [docs/practice-mode.md](./docs/practice-mode.md). Automated trains: `npm run practice:match` (hack path) · `npm run practice:shokunin` (craftsman SK0–SK5 path → `playtest-reports/practice/shokunin-*`).
+**Practice (sumi) mode:** **on by default** (sumi ghost + live grade). Free train / sandbox is a deliberate opt-out via `⋯ → Free train` (persists in `localStorage` key `bonsai-en:mode` = `practice` | `sandbox`). Toggle via UI or `setSumiChallenge(true|false)`. Score with `getPracticeScore()` (containment, band fit, centerline, height). Deep dive: [docs/practice-mode.md](./docs/practice-mode.md). Automated trains: `npm run practice:match` (hack path) · `npm run practice:shokunin` (craftsman SK0–SK5 path → `playtest-reports/practice/shokunin-*`) — both still call `setSumiChallenge(true)` or rely on default-on.
 
 **Visual changes:** always verify with screenshots (do not ship renderer changes un-checked).
 

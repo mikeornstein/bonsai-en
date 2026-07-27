@@ -33,6 +33,7 @@ export interface BonsaiHarness {
   setDofEnabled(on: boolean): void;
   getDofEnabled(): boolean;
   newSapling(): void;
+  /** Practice (sumi + grade) on/off. Default on; persists as bonsai-en:mode. */
   setSumiChallenge(on: boolean): void;
   setMuted(on: boolean): void;
   getPhysicsTelemetry(): {
@@ -105,11 +106,8 @@ try {
       game.newSapling();
     },
     setSumiChallenge(on: boolean) {
-      game.scene.sumi.setEnabled(on);
-      if (on) {
-        const s = game.getPracticeScore();
-        game.scene.sumi.applyScoreFeedback(s);
-      }
+      // Shared path with menu: updates ghost, status, button, localStorage
+      game.setPracticeMode(on);
     },
     getPracticeScore() {
       return game.getPracticeScore();

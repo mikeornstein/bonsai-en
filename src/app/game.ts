@@ -160,6 +160,8 @@ export class Game {
     const species = getSpecies(this.tree.speciesId);
     this.physics = createPhysicsWorld(this.tree, { ...species.physics });
     this.bindIdleChrome();
+    // Practice default + localStorage preference (after tree exists for scoring)
+    this.applyBootPracticeMode();
     this.refreshHud();
     this.applySeasonVisuals();
     this.scene.markDirty();
@@ -296,6 +298,56 @@ export class Game {
   /** Quantitative match of living silhouette to sumi practice target. */
   getPracticeScore(): PracticeScore {
     return scorePracticeMatch(this.tree);
+  }
+
+  /**
+   * Practice (sumi guide + live grade) vs Free train / sandbox.
+   * Default is practice; preference persists in localStorage `bonsai-en:mode`.
+   */
+  setPracticeMode(on: boolean, opts?: { persist?: boolean }): void {
+    const persist = opts?.persist !== false;
+    this.scene.sumi.setEnabled(on);
+    if (on) {
+      const s = this.getPracticeScore();
+      this.scene.sumi.applyScoreFeedback(s);
+      this.setStatus(s.label);
+      this.lastPracticeLabel = s.label;
+    } else {
+      this.setStatus('Free train');
+      this.lastPracticeLabel = '';
+    }
+    this.syncPracticeButton(on);
+    if (persist) writePlayMode(on ? 'practice' : 'sandbox');
+  }
+
+  /** Menu label: when practice is on, offer Free train; when off, offer Practice. */
+  private syncPracticeButton(on: boolean): void {
+    const btn = document.getElementById('btn-sumi');
+    if (!btn) return;
+    btn.textContent = on ? 'Free train' : 'Practice';
+    btn.title = on
+      ? 'Sandbox without the sumi silhouette guide'
+      : 'Sumi silhouette guide + live grade';
+  }
+
+  /**
+   * Apply stored mode at boot (default practice). Does not clobber bootstrap
+   * status lines (shared tree / autosave / recovery).
+   */
+  private applyBootPracticeMode(): void {
+    const on = readPlayMode() === 'practice';
+    this.scene.sumi.setEnabled(on);
+    this.syncPracticeButton(on);
+    if (!on) return;
+    const s = this.getPracticeScore();
+    this.scene.sumi.applyScoreFeedback(s);
+    this.lastPracticeLabel = s.label;
+    const status = this.statusEl.textContent?.trim() ?? '';
+    if (!status) this.setStatus(s.label);
+    // First-run / practice-default hint (shokunin-aligned)
+    this.hintEl.textContent =
+      'Match the ink · prune outside · wire the trunk · grow into the pad';
+    this.hintEl.style.opacity = '0.85';
   }
 
   /** Persist current tree via the same path as the Save menu item. */
@@ -546,19 +598,8 @@ export class Game {
 
     document.getElementById('btn-sumi')?.addEventListener('click', () => {
       closeFiles();
-      const on = !this.scene.sumi.isEnabled();
-      this.scene.sumi.setEnabled(on);
-      if (on) {
-        const s = this.getPracticeScore();
-        this.scene.sumi.applyScoreFeedback(s);
-        this.setStatus(s.label);
-        this.lastPracticeLabel = s.label;
-      } else {
-        this.setStatus('Free train');
-        this.lastPracticeLabel = '';
-      }
-      const btn = document.getElementById('btn-sumi');
-      if (btn) btn.textContent = on ? 'Practice on' : 'Practice';
+      // Invert: practice on → Free train; sandbox → Practice
+      this.setPracticeMode(!this.scene.sumi.isEnabled());
     });
 
     window.addEventListener('keydown', (e) => {
@@ -993,6 +1034,10 @@ export class Game {
 }
 
 const WIRE_BENT_ONCE_KEY = 'bonsai-en:wire-bent-once';
+/** Play mode preference: practice (default) | sandbox (free train). */
+const MODE_KEY = 'bonsai-en:mode';
+
+type PlayMode = 'practice' | 'sandbox';
 
 function readHasBentOnce(): boolean {
   try {
@@ -1007,5 +1052,24 @@ function writeHasBentOnce(): void {
     localStorage.setItem(WIRE_BENT_ONCE_KEY, '1');
   } catch {
     // private mode / quota — session-only flag still works via instance field
+  }
+}
+
+/** First visit and unknown values default to practice. */
+function readPlayMode(): PlayMode {
+  try {
+    const v = localStorage.getItem(MODE_KEY);
+    if (v === 'sandbox') return 'sandbox';
+    return 'practice';
+  } catch {
+    return 'practice';
+  }
+}
+
+function writePlayMode(mode: PlayMode): void {
+  try {
+    localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // private mode / quota
   }
 }

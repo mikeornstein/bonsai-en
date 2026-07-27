@@ -1,6 +1,7 @@
 /**
- * Optional sumi silhouette shape practice — soft ink outline + faint fill.
- * Off by default; enable via window.__bonsai.setSumiChallenge(true).
+ * Sumi silhouette shape practice — soft ink outline + faint fill.
+ * Practice is the default play mode (see Game / localStorage `bonsai-en:mode`).
+ * Toggle via UI (Free train ↔ Practice) or window.__bonsai.setSumiChallenge(on).
  *
  * Geometry comes from src/sim/practice/target.ts so scoring and ghost share one shape.
  */
