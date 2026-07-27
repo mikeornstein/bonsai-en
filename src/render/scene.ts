@@ -68,6 +68,11 @@ export class BonsaiScene {
   private dofWanted = true;
   private softGL = false;
   private view: CameraViewName = 'default';
+  /**
+   * True after the player has orbited/zoomed/panned this session.
+   * When set, growth-time auto-fit must not reframe (#60).
+   */
+  private cameraUserOwned = false;
   /** Saved play-camera pose so audit views can restore cleanly. */
   private savedPerspPos = new THREE.Vector3(0.34, 0.24, 0.42);
   private savedPerspTarget = new THREE.Vector3(0, PEDESTAL_HEIGHT + 0.12, 0);
@@ -141,6 +146,17 @@ export class BonsaiScene {
     this.controls.maxDistance = 1.5;
     this.controls.maxPolarAngle = Math.PI * 0.48;
     this.controls.update();
+    // Once the player orbits/zooms, growth must not steal framing (#60)
+    this.controls.addEventListener('start', () => {
+      this.cameraUserOwned = true;
+    });
+    canvas.addEventListener(
+      'wheel',
+      () => {
+        this.cameraUserOwned = true;
+      },
+      { passive: true },
+    );
 
     this.setupLights();
 
@@ -602,9 +618,37 @@ export class BonsaiScene {
     return this.view === 'default';
   }
 
-  frameTree(tree: TreeState): void {
+  /** Player has taken framing control (orbit/zoom) this session. */
+  isCameraUserOwned(): boolean {
+    return this.cameraUserOwned;
+  }
+
+  /**
+   * Mark framing as player-owned so growth auto-fit stops.
+   * Called from orbit start / wheel; also available to the harness.
+   */
+  claimCameraOwnership(): void {
+    this.cameraUserOwned = true;
+  }
+
+  /**
+   * Clear user framing ownership (e.g. new sapling). Next frameTree may auto-fit.
+   */
+  releaseCameraOwnership(): void {
+    this.cameraUserOwned = false;
+  }
+
+  /**
+   * Ease orbit target / distance to fit the living canopy.
+   * @param opts.force — reframe even if the player owns the camera (boot, new sapling, explicit Frame)
+   *
+   * Growth ticks call without force; if the user has orbited/zoomed, this is a no-op (#60).
+   */
+  frameTree(tree: TreeState, opts?: { force?: boolean }): void {
     // Don't fight orthographic audit views
     if (this.view !== 'default') return;
+    // Respect user framing during plant-time growth
+    if (this.cameraUserOwned && !opts?.force) return;
 
     const frames = computeWorldFrames(tree);
     let maxY = 0.08;

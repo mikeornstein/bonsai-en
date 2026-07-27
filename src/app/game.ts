@@ -175,7 +175,8 @@ export class Game {
       try {
         this.syncPhysics();
         this.scene.syncTree(this.tree, computeLiveWorldFrames(this.tree, this.physics));
-        this.scene.frameTree(this.tree);
+        // Boot: always frame once; subsequent growth respects user orbit/zoom (#60)
+        this.scene.frameTree(this.tree, { force: true });
       } catch (err) {
         console.error('[bonsai-en] initial tree sync failed', err);
         this.setStatus(`Tree render failed: ${(err as Error).message}`);
@@ -477,9 +478,20 @@ export class Game {
       this.tree,
       computeLiveWorldFrames(this.tree, this.physics),
     );
-    this.scene.frameTree(this.tree);
+    // New plant: clear owned framing and fit the sapling (#60)
+    this.scene.releaseCameraOwnership();
+    this.scene.frameTree(this.tree, { force: true });
     this.setStatus('New juniper sapling');
     this.refreshHud();
+  }
+
+  /**
+   * Explicit full-tree framing — reclaims auto-fit until the player moves again.
+   * Growth ticks alone never force this.
+   */
+  frameCamera(): void {
+    this.scene.releaseCameraOwnership();
+    this.scene.frameTree(this.tree, { force: true });
   }
 
   private bootstrapTree(): TreeState {
@@ -544,6 +556,12 @@ export class Game {
       if (confirm('Start a new juniper sapling? Unsaved changes may be lost.')) {
         this.newSapling();
       }
+    });
+
+    document.getElementById('btn-frame')?.addEventListener('click', () => {
+      closeFiles();
+      this.frameCamera();
+      this.setStatus('Framed whole tree · orbit anytime to lock framing');
     });
 
     document.getElementById('btn-save')?.addEventListener('click', () => {
@@ -620,6 +638,10 @@ export class Game {
       if (key === 'n') this.setTool('pinch');
       if (key === 'w') this.setTool('wire');
       if (key === 'u') this.setTool('unwire');
+      if (key === 'f' && !e.metaKey && !e.ctrlKey) {
+        this.frameCamera();
+        this.setStatus('Framed whole tree · orbit anytime to lock framing');
+      }
       if (key === ' ') {
         e.preventDefault();
         this.setSpeed(this.speed === 'pause' ? 'live' : 'pause');
@@ -848,7 +870,8 @@ export class Game {
       this.markPhysicsDirty(true);
       this.refreshHud();
     }
-    // Flush pending mesh when pausing so player sees final structure
+    // Flush pending mesh when pausing so player sees final structure.
+    // Do not force reframe — user may be mid close-up work (#60).
     if (speed === 'pause' && this.pendingVisual) {
       this.pendingVisual = false;
       this.visualCooldownTimer = 0;
@@ -962,6 +985,7 @@ export class Game {
       this.pendingVisual = false;
       visualThisFrame = true;
       this.scene.markDirty();
+      // Auto-fit only if the player has not taken camera control (#60)
       this.scene.frameTree(this.tree);
     }
 
