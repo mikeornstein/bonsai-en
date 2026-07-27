@@ -31,7 +31,7 @@
 ### Yes (after this work)
 
 1. **Target scale** matches a ~1–2 year training sapling (~25 cm tall, pot-width pad).
-2. **Visual guide** is readable in front ortho and product view (faint diamond + S-curve stem).
+2. **Visual guide** is readable in front ortho and product view (faint cloud envelope + S-curve stem).
 3. **Score** tracks what you see: wild laterals raise overflow; prune pulls material inside; short trees score lower on height/band fill.
 4. **Tools matter:** prune/wire/grow can move the score (~+0.10 in the automated playthrough). Containment improves when strays are cut.
 
@@ -42,7 +42,7 @@
 | **Not a filled “win” condition yet** | Automated train peaked **forming ~0.68**, best runs earlier hit **close ~0.75**. **Match (≥0.82)** needs denser pad mass + trunk line, not only pruning sticks. |
 | **Wire is a double-edged tool** | Bending improved band fit / containment in some steps but **worsened centerline RMSE** (first-child stem path ≠ visual trunk after laterals). |
 | **Ghost is front-plane only** | Drawn on `z ≈ 0`. Score also uses front **x–y**. Orbiting makes 3D branches look outside the card even when the front silhouette is fine — correct for bonsai “viewing angle,” confusing if players expect a 3D cage. |
-| **Foliage sparsity** | Stylized scale pads never fill the diamond; band-fit sweet spot is ~75% of target width so sparse trees can still grade “close.” |
+| **Foliage sparsity** | Stylized scale pads never fill the cloud envelope; band-fit sweet spot is ~75% of target width so sparse trees can still grade “close.” |
 | **Status contention** | Tool messages (`Cut clean…`) overwrite the practice line until the next 1.2s score tick. |
 | **Original design** | Pre-change outline was a **~2.5 cm-wide S-curve** — almost unmatchable as a pad. Replaced with a proper moyogi envelope; #53 retuned to **cloud pad + classic stem rhythm** from refs (still achievable, not a solid fill win). |
 
@@ -120,7 +120,7 @@ window.__bonsai.getPracticeScore()
 
 **Issue:** #40  
 
-The ink ghost is a classic **informal upright (moyogi)**. A craftsman works **front-first**, **structure before foliage**, **time between cuts** — never Years-spin hoping the diamond fills, and never “prune the longest 45% of tips” with uncorrelated wire dirs.
+The ink ghost is a classic **informal upright (moyogi)**. A craftsman works **front-first**, **structure before foliage**, **time between cuts** — never Years-spin hoping the envelope fills, and never “prune the longest 45% of tips” with uncorrelated wire dirs.
 
 Maxim encoded in the test:
 
