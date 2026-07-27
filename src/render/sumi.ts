@@ -4,17 +4,30 @@
  * Toggle via UI (Free train ↔ Practice) or window.__bonsai.setSumiChallenge(on).
  *
  * Geometry comes from src/sim/practice/target.ts so scoring and ghost share one shape.
+ *
+ * Ink hierarchy (docs/refs/sumi/, issue #53): stem > outline > fill.
+ * Ghost stays quiet so living wood and product lighting remain primary.
  */
 import * as THREE from 'three';
 import { PEDESTAL_HEIGHT, POT_SOIL_LOCAL_Y } from './pot';
 import { PRACTICE_STEM, practiceTargetPolygon } from '../sim/practice/target';
 import type { PracticeScore } from '../sim/practice/score';
 
+/** Warm sumi ink — slightly cooler than pure black so it sits in the cyclorama. */
+const INK = new THREE.Color('#242220');
+const INK_STEM = new THREE.Color('#1a1816');
+
+/** Base opacities (far / default). Grade feedback only nudges upward. */
+const FILL_BASE = 0.04;
+const LINE_BASE = 0.18;
+const STEM_BASE = 0.3;
+
 export class SumiChallenge {
   readonly group = new THREE.Group();
   private enabled = false;
   private line: THREE.Line | null = null;
   private fill: THREE.Mesh | null = null;
+  private stemLine: THREE.Line | null = null;
   private lastGrade: PracticeScore['grade'] | null = null;
 
   constructor() {
@@ -34,7 +47,7 @@ export class SumiChallenge {
 
   /**
    * Soft visual feedback from quantitative score (opacity nudge by grade).
-   * Does not alter the target geometry.
+   * Does not alter the target geometry. Keeps ink secondary to the tree.
    */
   applyScoreFeedback(score: PracticeScore): void {
     if (!this.enabled || !this.line || !this.fill) return;
@@ -42,23 +55,30 @@ export class SumiChallenge {
     this.lastGrade = score.grade;
     const lineMat = this.line.material as THREE.LineBasicMaterial;
     const fillMat = this.fill.material as THREE.MeshBasicMaterial;
-    // Slightly stronger ink as the player approaches the shape
+    const stemMat = this.stemLine
+      ? (this.stemLine.material as THREE.LineBasicMaterial)
+      : null;
+    // Slightly stronger ink as the player approaches the shape — still quiet
     switch (score.grade) {
       case 'match':
-        lineMat.opacity = 0.42;
-        fillMat.opacity = 0.12;
+        lineMat.opacity = 0.32;
+        fillMat.opacity = 0.085;
+        if (stemMat) stemMat.opacity = 0.4;
         break;
       case 'close':
-        lineMat.opacity = 0.34;
-        fillMat.opacity = 0.09;
+        lineMat.opacity = 0.26;
+        fillMat.opacity = 0.065;
+        if (stemMat) stemMat.opacity = 0.36;
         break;
       case 'forming':
-        lineMat.opacity = 0.28;
-        fillMat.opacity = 0.07;
+        lineMat.opacity = 0.22;
+        fillMat.opacity = 0.05;
+        if (stemMat) stemMat.opacity = 0.32;
         break;
       default:
-        lineMat.opacity = 0.24;
-        fillMat.opacity = 0.055;
+        lineMat.opacity = LINE_BASE;
+        fillMat.opacity = FILL_BASE;
+        if (stemMat) stemMat.opacity = STEM_BASE;
     }
   }
 
@@ -83,9 +103,9 @@ export class SumiChallenge {
 
     const fillGeo = new THREE.ShapeGeometry(shape);
     const fillMat = new THREE.MeshBasicMaterial({
-      color: new THREE.Color('#2a2824'),
+      color: INK.clone(),
       transparent: true,
-      opacity: 0.055,
+      opacity: FILL_BASE,
       depthWrite: false,
       side: THREE.DoubleSide,
     });
@@ -94,40 +114,39 @@ export class SumiChallenge {
     this.fill.renderOrder = 1;
     this.group.add(this.fill);
 
-    // Stem + closed pad outline as a single line loop
+    // Closed pad outline — soft edge, secondary to stem
     const pts: THREE.Vector3[] = poly.map(
       ([x, y]) => new THREE.Vector3(x, soil + y, 0),
     );
-    // Close the loop for a readable ink edge
     if (pts.length) {
       pts.push(pts[0].clone());
     }
-    // Also draw stem alone slightly stronger for trunk read
-    const stemPts = PRACTICE_STEM.map(
-      ([x, y]) => new THREE.Vector3(x, soil + y, 0.0005),
-    );
 
     const lineGeo = new THREE.BufferGeometry().setFromPoints(pts);
     const lineMat = new THREE.LineBasicMaterial({
-      color: new THREE.Color('#2a2824'),
+      color: INK.clone(),
       transparent: true,
-      opacity: 0.24,
+      opacity: LINE_BASE,
       depthWrite: false,
     });
     this.line = new THREE.Line(lineGeo, lineMat);
     this.line.renderOrder = 2;
     this.group.add(this.line);
 
+    // Stem alone slightly stronger — moyogi story is the trunk line
+    const stemPts = PRACTICE_STEM.map(
+      ([x, y]) => new THREE.Vector3(x, soil + y, 0.0005),
+    );
     const stemGeo = new THREE.BufferGeometry().setFromPoints(stemPts);
     const stemMat = new THREE.LineBasicMaterial({
-      color: new THREE.Color('#1f1d1a'),
+      color: INK_STEM.clone(),
       transparent: true,
-      opacity: 0.32,
+      opacity: STEM_BASE,
       depthWrite: false,
     });
-    const stemLine = new THREE.Line(stemGeo, stemMat);
-    stemLine.renderOrder = 3;
-    this.group.add(stemLine);
+    this.stemLine = new THREE.Line(stemGeo, stemMat);
+    this.stemLine.renderOrder = 3;
+    this.group.add(this.stemLine);
   }
 
   dispose(): void {
@@ -141,5 +160,6 @@ export class SumiChallenge {
     });
     this.line = null;
     this.fill = null;
+    this.stemLine = null;
   }
 }

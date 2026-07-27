@@ -53,10 +53,12 @@ describe('shokunin practice helpers', () => {
   });
 
   it('stemDirectionAtHeight / stemXAtHeight sample the S-curve', () => {
-    const y = 0.11;
+    // Vertex on PRACTICE_STEM (moyogi first-bend / counter — see docs/refs/sumi/)
+    const y = 0.055;
     const x = stemXAtHeight(y);
-    // At y=0.11 PRACTICE_STEM has [-0.018, 0.11]
-    expect(x).toBeCloseTo(-0.018, 3);
+    expect(x).toBeCloseTo(-0.016, 3);
+    // Mid counter-bend lean positive-x
+    expect(stemXAtHeight(0.135)).toBeCloseTo(0.018, 3);
     const dir = stemDirectionAtHeight(y);
     expect(Math.hypot(dir[0], dir[1], dir[2])).toBeGreaterThan(0.9);
   });
