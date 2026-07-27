@@ -13,7 +13,16 @@ import {
 import { POT_SOIL_LOCAL_Y } from './pot';
 
 const UP = new THREE.Vector3(0, 1, 0);
-const MIN_VISUAL_RADIUS = 0.0016;
+/**
+ * GPU / aliasing epsilon only — visual diameter follows sim (#58).
+ * Old floor 0.0016 m (~3.2 mm diam) fattened every twig into a stick.
+ */
+const MIN_VISUAL_RADIUS = 0.00012;
+/**
+ * Minimum pick-proxy radius (m). Thin mesh stays fine; raycast uses a
+ * slightly fatter invisible collider so prune/wire remain usable (#58).
+ */
+const PICK_MIN_RADIUS = 0.0024;
 /**
  * Soft cap so large trees stay interactive on mobile / headless.
  * Lowered from 16k (#34) — pad clouds still read full; write/rebuild cost drops.
@@ -49,6 +58,8 @@ interface SegmentPoseHandles {
   segment: THREE.Mesh;
   jointBase: THREE.Mesh;
   jointTip: THREE.Mesh | null;
+  /** Invisible fat collider for thin wood — not drawn. */
+  pickProxy: THREE.Mesh | null;
   r0: number;
   r1: number;
 }
@@ -118,6 +129,8 @@ export class TreeRenderer {
   private budGroup = new THREE.Group();
   private scarMat: THREE.MeshStandardMaterial | null = null;
   private budMat: THREE.MeshStandardMaterial | null = null;
+  /** Shared invisible material for pick proxies (thin-wood hit bias). */
+  private pickMat: THREE.MeshBasicMaterial | null = null;
   private feedbackUntil = 0;
 
   readonly pickables: THREE.Object3D[] = [];
@@ -330,6 +343,7 @@ export class TreeRenderer {
       const frame = frames.get(id);
       if (!frame) continue;
       this.placeSegment(handles.segment, frame);
+      if (handles.pickProxy) this.placeSegment(handles.pickProxy, frame);
       handles.jointBase.position.set(...frame.base);
       if (handles.jointTip) {
         handles.jointTip.position.set(...frame.tip);
@@ -454,10 +468,34 @@ export class TreeRenderer {
     mesh.castShadow = true;
     mesh.receiveShadow = true;
     this.branchGroup.add(mesh);
-    this.pickables.push(mesh);
 
-    // Joint collar at base — hides cylinder seams
-    const jointR = r0 * 1.02;
+    // Pick: fatten hit target without fattening the drawn mesh (#58)
+    let pickProxy: THREE.Mesh | null = null;
+    if (Math.min(r0, r1) < PICK_MIN_RADIUS) {
+      if (!this.pickMat) {
+        this.pickMat = new THREE.MeshBasicMaterial({
+          transparent: true,
+          opacity: 0,
+          depthWrite: false,
+          depthTest: false,
+          side: THREE.DoubleSide,
+        });
+      }
+      const pickR0 = Math.max(r0, PICK_MIN_RADIUS);
+      const pickR1 = Math.max(r1, PICK_MIN_RADIUS * 0.75);
+      pickProxy = this.makeTaperedSegment(pickR0, pickR1, frame, this.pickMat);
+      pickProxy.userData.nodeId = id;
+      pickProxy.castShadow = false;
+      pickProxy.receiveShadow = false;
+      // Keep in scene graph so raycast finds it; fully transparent
+      this.branchGroup.add(pickProxy);
+      this.pickables.push(pickProxy);
+    } else {
+      this.pickables.push(mesh);
+    }
+
+    // Joint collar at base — hides cylinder seams (scales with visual r)
+    const jointR = Math.max(r0 * 1.02, MIN_VISUAL_RADIUS);
     const joint = new THREE.Mesh(this._jointGeo, mat);
     joint.position.set(...frame.base);
     joint.scale.set(jointR, jointR * 0.85, jointR);
@@ -469,9 +507,10 @@ export class TreeRenderer {
     // Tip joint when branching (collar into children)
     let tipJoint: THREE.Mesh | null = null;
     if (node.children.length > 0) {
+      const tipR = Math.max(r1 * 1.05, MIN_VISUAL_RADIUS);
       tipJoint = new THREE.Mesh(this._jointGeo, mat);
       tipJoint.position.set(...frame.tip);
-      tipJoint.scale.set(r1 * 1.05, r1 * 0.9, r1 * 1.05);
+      tipJoint.scale.set(tipR, tipR * 0.86, tipR);
       tipJoint.castShadow = true;
       tipJoint.receiveShadow = true;
       tipJoint.userData.nodeId = id;
@@ -482,6 +521,7 @@ export class TreeRenderer {
       segment: mesh,
       jointBase: joint,
       jointTip: tipJoint,
+      pickProxy,
       r0,
       r1,
     });
@@ -494,8 +534,8 @@ export class TreeRenderer {
     mat: THREE.Material,
   ): THREE.Mesh {
     const geo = new THREE.CylinderGeometry(
-      Math.max(0.0005, r1),
-      Math.max(0.0005, r0),
+      Math.max(MIN_VISUAL_RADIUS, r1),
+      Math.max(MIN_VISUAL_RADIUS, r0),
       1,
       this.radialSegments,
       1,
@@ -741,8 +781,9 @@ export class TreeRenderer {
     const points: THREE.Vector3[] = [];
     const turns = 4;
     const segs = 40;
-    // Slightly larger coil amp so wire reads at a glance
-    const amp = radius + 0.0017;
+    // Coil stands just off the bark; scales with wood so thin twigs aren't
+    // wrapped by a fixed ~2 mm gap that dwarfs fine features (#58)
+    const amp = radius + Math.min(0.0017, Math.max(0.00035, radius * 0.95));
     for (let i = 0; i <= segs; i++) {
       const t = i / segs;
       const ang = t * turns * Math.PI * 2;
@@ -751,8 +792,10 @@ export class TreeRenderer {
       );
     }
     const curve = new THREE.CatmullRomCurve3(points);
-    // Thicker when fresh; thinner as wood holds the bend
-    const tubeR = 0.00072 * (1 - setAmount * 0.35);
+    // Thicker when fresh; thinner as wood holds the bend — also scale down
+    // on hairline shoots so wire doesn't read thicker than the wood
+    const tubeBase = Math.min(0.00072, Math.max(0.00028, radius * 0.55));
+    const tubeR = tubeBase * (1 - setAmount * 0.35);
     const geo = new THREE.TubeGeometry(curve, segs, tubeR, 6, false);
     const mat = this.wireMat!.clone();
     // Fresh: bright warm copper-aluminum; set: cool dull bronze
@@ -890,6 +933,7 @@ export class TreeRenderer {
     if (this.highlightRimMat) sharedMats.add(this.highlightRimMat);
     if (this.scarMat) sharedMats.add(this.scarMat);
     if (this.budMat) sharedMats.add(this.budMat);
+    if (this.pickMat) sharedMats.add(this.pickMat);
     while (g.children.length) {
       const c = g.children.pop()!;
       if (c instanceof THREE.Mesh || c instanceof THREE.InstancedMesh) {
@@ -921,6 +965,7 @@ export class TreeRenderer {
     this.highlightRimMat?.dispose();
     this.scarMat?.dispose();
     this.budMat?.dispose();
+    this.pickMat?.dispose();
     this.clearGroup(this.scarGroup);
     this.clearGroup(this.budGroup);
   }

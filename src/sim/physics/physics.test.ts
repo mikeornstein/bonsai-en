@@ -362,4 +362,40 @@ describe('physics collisions', () => {
       expect(j.J).toBeGreaterThan(0);
     }
   });
+
+  /** Thin tips (below old 1.6 mm visual floor) must not explode contacts (#58). */
+  it('fine-tip canopy settles without NaN blow-up', () => {
+    const tree = createSapling('juniper-procumbens', 58);
+    // Force several tips into the fine-feature band
+    for (const n of Object.values(tree.nodes)) {
+      if (n.living && n.children.length === 0) {
+        n.radius = 0.00045;
+        n.targetRadius = 0.00045;
+      }
+    }
+    const world = createPhysicsWorld(tree, {
+      ...DEFAULT_PHYSICS_CONFIG,
+      gravity: 9.81 * 0.22,
+      collisions: true,
+    });
+
+    for (let i = 0; i < 240; i++) {
+      stepPhysics(world, tree, 1 / 60, {
+        gravity: true,
+        cameraAccel: [0, 0, 0],
+        cameraAlpha: [0, 0, 0],
+        enabled: false,
+      });
+    }
+
+    const tel = measureTelemetry(world);
+    expect(Number.isFinite(tel.kineticEnergy)).toBe(true);
+    expect(Number.isFinite(tel.maxOmega)).toBe(true);
+    expect(tel.kineticEnergy).toBeLessThan(50);
+    for (const j of world.joints.values()) {
+      expect(Number.isFinite(j.thetaX)).toBe(true);
+      expect(Number.isFinite(j.thetaZ)).toBe(true);
+      expect(Number.isFinite(j.omegaX)).toBe(true);
+    }
+  });
 });

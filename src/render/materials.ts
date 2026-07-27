@@ -68,9 +68,9 @@ export function barkMaterialForSegment(
   mat.map = base.map;
   mat.normalMap = base.normalMap;
   mat.roughnessMap = base.roughnessMap;
-  // Thin shoots slightly smoother
-  if (radius < 0.0035) {
-    mat.roughness = 0.75;
+  // Thin / young shoots slightly smoother (threshold tracks finer wood #58)
+  if (radius < 0.0028) {
+    mat.roughness = 0.72;
   }
   return mat;
 }

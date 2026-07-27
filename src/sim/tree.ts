@@ -401,14 +401,15 @@ export function createInternode(
   species: SpeciesDefinition,
 ): Internode {
   const id = allocId(tree, 'n');
+  const r = Math.max(radius, species.minRadius);
   const node: Internode = {
     id,
     parentId,
     children: [],
     length,
     targetLength: length,
-    radius,
-    targetRadius: radius,
+    radius: r,
+    targetRadius: r,
     orientation: quatNormalize(orientation),
     ageDays: 0,
     lignification: parentId === null ? 0.4 : 0.05,
@@ -425,7 +426,7 @@ export function createInternode(
   node.buds.push(makeBud(tree, 'terminal', 1, 0, 'dormant'));
   // Thick trunk wood: sparse/no foliage so bark reads; outer shoots get pads
   const thinness = clamp01(
-    1 - radius / Math.max(species.saplingRadius * 1.15, 1e-6),
+    1 - r / Math.max(species.saplingRadius * 1.15, 1e-6),
   );
   if (parentId === null) {
     return node;
@@ -791,7 +792,8 @@ export function extendFromBud(
     species.internodeLength.min,
     species.internodeLength.max,
   );
-  const radius = Math.max(0.0008, parent.radius * 0.62);
+  // Species tip floor (was hard 0.0008) — allows fine laterals (#58)
+  const radius = Math.max(species.minRadius, parent.radius * 0.62);
   const child = createInternode(
     tree,
     parent.id,
