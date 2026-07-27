@@ -166,9 +166,10 @@ function pipeModelTargets(
     leafArea.set(id, area);
     const targetCross = area / species.pipeCoefficient;
     const targetR = Math.sqrt(Math.max(1e-12, targetCross / Math.PI));
+    // Floor at species minRadius (was hard 0.0006) so tips can stay fine (#58)
     node.targetRadius = clamp(
       Math.max(node.radius * 0.98, targetR),
-      0.0006,
+      species.minRadius,
       species.maxRadius,
     );
     // Ensure parent thicker than child slightly

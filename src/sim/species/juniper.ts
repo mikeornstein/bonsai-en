@@ -13,6 +13,8 @@ export const juniper: SpeciesDefinition = {
   // Slightly larger units so a training sapling fills the pot visually
   internodeLength: { min: 0.012, max: 0.028 },
   saplingRadius: 0.007,
+  /** ~0.45 mm tip floor — fine laterals without zero-radius wood (#58). */
+  minRadius: 0.00045,
   maxRadius: 0.05,
 
   // Acute branching typical of juniper pads

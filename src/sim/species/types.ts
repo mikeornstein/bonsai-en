@@ -10,6 +10,12 @@ export interface SpeciesDefinition {
   internodeLength: { min: number; max: number };
   /** Starting sapling trunk radius (m). */
   saplingRadius: number;
+  /**
+   * Minimum living wood cross-section radius (m).
+   * Floors new laterals and pipe-model target radius so fine tips can exist
+   * without going to zero (or exploding physics). Juniper targets ~0.3–0.6 mm.
+   */
+  minRadius: number;
   /** Max reasonable radius for bonsai trunk (m). */
   maxRadius: number;
 

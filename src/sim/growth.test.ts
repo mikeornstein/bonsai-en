@@ -9,6 +9,7 @@ import {
   collectOccupiedAzimuths,
   countLivingNodes,
   createSapling,
+  extendFromBud,
   openSectorAzimuth,
   totalFoliageArea,
   wrapAzimuth,
@@ -90,6 +91,84 @@ describe('growth', () => {
     for (let i = 0; i < 40; i++) tickDay(tree);
     // Stressed trees are not cushioned — reserves may stay in Low band
     expect(tree.vigor).toBeLessThan(0.55);
+  });
+});
+
+describe('min branch diameter (#58)', () => {
+  const species = getSpecies('juniper-procumbens');
+  /** Old render floor that fattened every twig (~3.2 mm diam). */
+  const OLD_VISUAL_FLOOR = 0.0016;
+
+  it('documents species tip floor in the fine-feature band', () => {
+    // Target ~0.3–0.6 mm radius tips for juniper
+    expect(species.minRadius).toBeGreaterThanOrEqual(0.0003);
+    expect(species.minRadius).toBeLessThanOrEqual(0.0006);
+    expect(species.minRadius).toBeLessThan(OLD_VISUAL_FLOOR);
+    expect(species.minRadius).toBeLessThan(species.saplingRadius);
+  });
+
+  it('extendFromBud floors at species.minRadius, not the old 0.0008 hard floor', () => {
+    const tree = createSapling('juniper-procumbens', 58);
+    // Artificial thin parent so spawn hits the tip floor
+    const host = Object.values(tree.nodes).find(
+      (n) => n.living && n.id !== tree.rootId && n.children.length === 0,
+    )!;
+    host.radius = species.minRadius * 1.1; // would yield parent*0.62 < minRadius
+    host.buds = [
+      {
+        id: 'test-ax',
+        type: 'axillary',
+        state: 'flushing',
+        t: 0.5,
+        azimuth: 1.2,
+        ageDays: 5,
+        breakForce: 1,
+      },
+    ];
+    const rng = createRng(1);
+    const child = extendFromBud(
+      tree,
+      host.id,
+      host.buds[0],
+      species,
+      rng,
+    );
+    expect(child).toBeTruthy();
+    expect(child!.radius).toBeGreaterThanOrEqual(species.minRadius - 1e-12);
+    // Fine enough that the old visual floor would have inflated it
+    expect(child!.radius).toBeLessThan(OLD_VISUAL_FLOOR);
+  });
+
+  it('after multi-year growth, some living tips are below the old 0.0016 floor', () => {
+    const tree = createSapling('juniper-procumbens', 20260726);
+    for (let i = 0; i < 18; i++) {
+      tickDays(tree, 60, 60);
+    }
+
+    const livingTips = Object.values(tree.nodes).filter(
+      (n) => n.living && n.children.length === 0,
+    );
+    expect(livingTips.length).toBeGreaterThan(0);
+
+    const fine = livingTips.filter((n) => n.radius < OLD_VISUAL_FLOOR);
+    expect(fine.length).toBeGreaterThan(0);
+
+    // All living wood respects the species floor
+    for (const n of Object.values(tree.nodes)) {
+      if (!n.living) continue;
+      expect(n.radius).toBeGreaterThanOrEqual(species.minRadius - 1e-12);
+    }
+
+    // Taper chain: parent radius >= child * modest factor (sim target enforces ~1.08)
+    for (const child of Object.values(tree.nodes)) {
+      if (!child.living || !child.parentId) continue;
+      const parent = tree.nodes[child.parentId];
+      if (!parent?.living) continue;
+      // Actual radius can lag target slightly; soft check on targets
+      expect(parent.targetRadius).toBeGreaterThanOrEqual(
+        child.targetRadius * 0.95,
+      );
+    }
   });
 });
 
