@@ -14,6 +14,7 @@
 | Visual ghost | `src/render/sumi.ts` |
 | Live HUD + harness | `Game.getPracticeScore()`, `window.__bonsai.getPracticeScore()` |
 | Mode preference | `localStorage` key `bonsai-en:mode` = `practice` \| `sandbox` |
+| Reference plates (licenses + rationale) | [`docs/refs/sumi/`](./refs/sumi/README.md) |
 
 | Control | Behavior |
 |---------|----------|
@@ -23,12 +24,14 @@
 | Preference | Survives reload; share/import keep last user mode |
 | First-run hint | “Match the ink · prune outside · wire the trunk · grow into the pad” |
 
+**Art grounding (#53):** stem S-curve and cloud envelope are tuned from CC moyogi diagrams/photos plus original ink plates (not a freehand diamond). Ink hierarchy is stem > outline > fill so the ghost stays quiet against living wood.
+
 ## Does it make sense?
 
 ### Yes (after this work)
 
 1. **Target scale** matches a ~1–2 year training sapling (~25 cm tall, pot-width pad).
-2. **Visual guide** is readable in front ortho and product view (faint diamond + S-curve stem).
+2. **Visual guide** is readable in front ortho and product view (faint cloud envelope + S-curve stem).
 3. **Score** tracks what you see: wild laterals raise overflow; prune pulls material inside; short trees score lower on height/band fill.
 4. **Tools matter:** prune/wire/grow can move the score (~+0.10 in the automated playthrough). Containment improves when strays are cut.
 
@@ -39,9 +42,9 @@
 | **Not a filled “win” condition yet** | Automated train peaked **forming ~0.68**, best runs earlier hit **close ~0.75**. **Match (≥0.82)** needs denser pad mass + trunk line, not only pruning sticks. |
 | **Wire is a double-edged tool** | Bending improved band fit / containment in some steps but **worsened centerline RMSE** (first-child stem path ≠ visual trunk after laterals). |
 | **Ghost is front-plane only** | Drawn on `z ≈ 0`. Score also uses front **x–y**. Orbiting makes 3D branches look outside the card even when the front silhouette is fine — correct for bonsai “viewing angle,” confusing if players expect a 3D cage. |
-| **Foliage sparsity** | Stylized scale pads never fill the diamond; band-fit sweet spot is ~75% of target width so sparse trees can still grade “close.” |
+| **Foliage sparsity** | Stylized scale pads never fill the cloud envelope; band-fit sweet spot is ~75% of target width so sparse trees can still grade “close.” |
 | **Status contention** | Tool messages (`Cut clean…`) overwrite the practice line until the next 1.2s score tick. |
-| **Original design** | Pre-change outline was a **~2.5 cm-wide S-curve** — almost unmatchable as a pad. Replaced with a proper moyogi envelope. |
+| **Original design** | Pre-change outline was a **~2.5 cm-wide S-curve** — almost unmatchable as a pad. Replaced with a proper moyogi envelope; #53 retuned to **cloud pad + classic stem rhythm** from refs (still achievable, not a solid fill win). |
 
 ## Quantitative metric
 
@@ -58,7 +61,7 @@ score = 0.28·containment
 | **containment** | Fraction of tree raster mass **inside** target polygon (`iou` field in API for stability) |
 | **bandFit** | Per-height-band width & mid alignment vs target envelope |
 | **centerlineFit** | Main-stem tips vs `PRACTICE_STEM` S-curve (`exp(-rmse/2cm)`) |
-| **heightFit** | Tree apex vs 25.5 cm target height |
+| **heightFit** | Tree apex vs ~25.2 cm target height (`PRACTICE_HEIGHT`) |
 | **presenceFit** | Fraction of target height bands that contain any tree |
 
 **Grades**
@@ -76,11 +79,13 @@ Ink opacity nudges slightly with grade (`SumiChallenge.applyScoreFeedback`).
 
 | Step (auto train) | Score | What the screenshots show |
 |-------------------|-------|---------------------------|
-| T0 sapling | forming ~55 | Tree in lower half of diamond; laterals poke sides |
+| T0 sapling | forming ~55 | Tree in lower half of cloud pad; laterals poke sides |
 | T1 wild Years | forming ~66 | Taller; branches **outside** pad → higher overflow |
-| T2 prune overflow | forming ~68 **best** | Cleaner inside envelope; still sparse canopy |
+| T2 prune overflow | forming ~68 **best** (pre-#53 baseline) | Cleaner inside envelope; still sparse canopy |
 | T3 wire S-bend | forming ~66 | Coils visible; trunk lean; centerline RMSE up |
 | T5 aggressive prune | forming ~66 | High containment (~0.92); thin — band fill drops |
+
+Soft expectations after the #53 cloud-envelope retune: automated trains should still improve over sapling; peak **forming ~0.65–0.72** remains normal. **Close** stays a soft gate (not a hard CI fail). Re-run `practice:shokunin` if hard gates regress.
 
 **Conclusion:** When the tree looks tighter to the ink, containment/score rise; when laterals stick out or the tree is short, score falls. Metric is usable for agents and players.
 
@@ -115,7 +120,7 @@ window.__bonsai.getPracticeScore()
 
 **Issue:** #40  
 
-The ink ghost is a classic **informal upright (moyogi)**. A craftsman works **front-first**, **structure before foliage**, **time between cuts** — never Years-spin hoping the diamond fills, and never “prune the longest 45% of tips” with uncorrelated wire dirs.
+The ink ghost is a classic **informal upright (moyogi)**. A craftsman works **front-first**, **structure before foliage**, **time between cuts** — never Years-spin hoping the envelope fills, and never “prune the longest 45% of tips” with uncorrelated wire dirs.
 
 Maxim encoded in the test:
 
@@ -186,6 +191,7 @@ npm run practice:shokunin
 
 ## Related code
 
+- `docs/refs/sumi/` — license-safe reference pack + rationale (#53)  
 - `src/sim/practice/target.ts` — shape data  
 - `src/sim/practice/score.ts` — metric + tests  
 - `src/sim/practice/shokunin.ts` — craftsman ranking / stem helpers + tests  
