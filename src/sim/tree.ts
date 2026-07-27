@@ -392,6 +392,64 @@ function makeFoliage(
   };
 }
 
+/**
+ * Thinness 0 = trunk-scale wood, 1 = tip-scale. Matches createInternode pad gate.
+ */
+export function foliageThinness(
+  node: Internode,
+  species: SpeciesDefinition,
+): number {
+  return clamp01(
+    1 - node.radius / Math.max(species.saplingRadius * 1.15, 1e-6),
+  );
+}
+
+/** True when this internode should carry scale pads (not thick trunk wood). */
+export function nodeCarriesFoliage(
+  node: Internode,
+  species: SpeciesDefinition,
+): boolean {
+  if (node.parentId === null) return false;
+  return foliageThinness(node, species) >= 0.28;
+}
+
+/** Target living pad count for a thin shoot (capped for mesh budget). */
+export function targetFoliagePads(
+  node: Internode,
+  species: SpeciesDefinition,
+): number {
+  const thinness = foliageThinness(node, species);
+  return Math.max(
+    1,
+    Math.min(
+      4,
+      Math.round(
+        (1.2 + node.length / Math.max(species.internodeLength.max, 1e-6)) *
+          (0.5 + 0.7 * thinness),
+      ),
+    ),
+  );
+}
+
+/**
+ * Attach a fresh foliage pad to a living node (evergreen turnover / recovery).
+ */
+export function addFoliagePad(
+  tree: TreeState,
+  nodeId: NodeId,
+  area: number,
+  t = 0.55,
+  azimuth?: number,
+): FoliageCluster | null {
+  const node = tree.nodes[nodeId];
+  if (!node?.living) return null;
+  const az =
+    azimuth ?? ((node.foliage.length * 2.399) % (Math.PI * 2));
+  const pad = makeFoliage(tree, t, az, area);
+  node.foliage.push(pad);
+  return pad;
+}
+
 export function createInternode(
   tree: TreeState,
   parentId: NodeId | null,
