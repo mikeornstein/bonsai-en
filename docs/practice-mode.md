@@ -1,11 +1,11 @@
 # Practice mode deep dive
 
-**Issue:** #36  
+**Issue:** #36 · default-on UX: #52  
 **Date:** 2026-07-26  
 
 ## What practice mode is
 
-`⋯ → Practice` toggles a **sumi ink silhouette** (soft fill + outline + stem line) of a classic **informal upright (moyogi)** target. Geometry is shared between:
+**Practice is the default play mode.** A **sumi ink silhouette** (soft fill + outline + stem line) of a classic **informal upright (moyogi)** target is visible on cold start, with live grade feedback. Geometry is shared between:
 
 | Layer | File |
 |-------|------|
@@ -13,8 +13,15 @@
 | Quantitative score | `src/sim/practice/score.ts` |
 | Visual ghost | `src/render/sumi.ts` |
 | Live HUD + harness | `Game.getPracticeScore()`, `window.__bonsai.getPracticeScore()` |
+| Mode preference | `localStorage` key `bonsai-en:mode` = `practice` \| `sandbox` |
 
-Off by default. Enabling sets status to a live grade label, e.g. `Practice · forming 68`.
+| Control | Behavior |
+|---------|----------|
+| Default / first visit | **Practice** — ghost + grade (status e.g. `Practice · forming 68`) |
+| `⋯ → Free train` | Sandbox — hide ghost, stop grade thrash; tools unchanged |
+| `⋯ → Practice` | Restore ghost + scoring |
+| Preference | Survives reload; share/import keep last user mode |
+| First-run hint | “Match the ink · prune outside · wire the trunk · grow into the pad” |
 
 ## Does it make sense?
 
@@ -95,10 +102,11 @@ npm run practice:match      # brute-force hack path → playtest-reports/practic
 npm run practice:shokunin   # craftsman path → playtest-reports/practice/shokunin-*
 ```
 
-Harness:
+Harness (practice is **on by default**; scripts may still set explicitly):
 
 ```js
-window.__bonsai.setSumiChallenge(true)
+window.__bonsai.setSumiChallenge(true)   // force practice; persists mode
+window.__bonsai.setSumiChallenge(false)  // free train / sandbox
 window.__bonsai.getPracticeScore()
 // { score, iou, coverage, overflow, centerlineRmse, heightRatio, bandFit, grade, label }
 ```
@@ -174,7 +182,7 @@ npm run practice:shokunin
 3. **Celebrate match** — call `acknowledge()` + soft ink pulse when grade first hits `match`.  
 4. **Multiple targets** — cascade, literati, windswept packs once one shape is fun.  
 5. **Seeded sapling for practice scripts** — reduce score variance across CI runs.  
-6. **Player-facing checklist** — “Cut outside the ink · Wire the trunk · Grow into the pad” hints in Practice mode.
+6. **Player-facing checklist** — boot hint now covers prune / wire / grow (issue #52); optional richer checklist still open.
 
 ## Related code
 
@@ -182,6 +190,7 @@ npm run practice:shokunin
 - `src/sim/practice/score.ts` — metric + tests  
 - `src/sim/practice/shokunin.ts` — craftsman ranking / stem helpers + tests  
 - `src/render/sumi.ts` — ghost  
+- `src/app/game.ts` — `setPracticeMode`, boot default + `bonsai-en:mode`  
 - `scripts/practice-match.mjs` — automated hack train + report  
 - `scripts/practice-shokunin.mjs` — craftsman path + report  
 
