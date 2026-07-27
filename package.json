@@ -11,6 +11,7 @@
     "test:watch": "vitest",
     "test:smoke": "node scripts/smoke-boot.mjs",
     "screenshots": "node scripts/screenshot.mjs",
+    "screenshots:detail": "node scripts/screenshot-detail.mjs",
     "playtest": "node scripts/playtest.mjs",
     "practice:match": "node scripts/practice-match.mjs",
     "practice:shokunin": "node scripts/practice-shokunin.mjs"

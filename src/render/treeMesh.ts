@@ -58,10 +58,23 @@ interface SegmentPoseHandles {
   segment: THREE.Mesh;
   jointBase: THREE.Mesh;
   jointTip: THREE.Mesh | null;
-  /** Invisible fat collider for thin wood — not drawn. */
+  /** Invisible fat collider for thin wood — not drawn (#58). */
   pickProxy: THREE.Mesh | null;
+  /** Optional surface-root flare lobes (root only) (#57). */
+  flareLobes: THREE.Mesh[];
   r0: number;
   r1: number;
+}
+
+/** Local-space flare lobe: unit cylinder along +Y, reoriented in applyPose. */
+interface FlareLobeSpec {
+  mesh: THREE.Mesh;
+  /** Radians around trunk +Y. */
+  azimuth: number;
+  /** Outward length along soil plane. */
+  length: number;
+  /** Slight downward pitch into soil (radians). */
+  pitch: number;
 }
 
 /** Training wire coil — helix baked in local +Y; re-oriented from live frames. */
@@ -115,6 +128,8 @@ export class TreeRenderer {
   private readonly _vUp = new THREE.Vector3(0, 0, 1);
   /** Branch mesh handles for per-frame physics pose streaming. */
   private poseHandles = new Map<NodeId, SegmentPoseHandles>();
+  /** Root flare lobe specs for live re-pose (session mesh only). */
+  private flareLobeSpecs: FlareLobeSpec[] = [];
   /** Wire / scar / bud attachments re-placed from live frames in applyPose. */
   private wirePoseHandles: WirePoseHandle[] = [];
   private scarPoseHandles: ScarPoseHandle[] = [];
@@ -241,6 +256,7 @@ export class TreeRenderer {
     this.clearGroup(this.budGroup);
     this.pickables.length = 0;
     this.poseHandles.clear();
+    this.flareLobeSpecs.length = 0;
     this.wirePoseHandles.length = 0;
     this.scarPoseHandles.length = 0;
     this.budPoseHandles.length = 0;
@@ -259,8 +275,8 @@ export class TreeRenderer {
     }
 
     const live = frames ?? computeWorldFrames(tree);
-    // Slightly bury the root so the trunk emerges from soil rather than floating on a disc
-    this.group.position.set(0, POT_SOIL_LOCAL_Y - 0.0025, 0);
+    // Bury root slightly so trunk seats in soil (no floating stick / hard disc cut)
+    this.group.position.set(0, POT_SOIL_LOCAL_Y - 0.0045, 0);
 
     const scales: ScaleInstance[] = [];
 
@@ -344,9 +360,19 @@ export class TreeRenderer {
       if (!frame) continue;
       this.placeSegment(handles.segment, frame);
       if (handles.pickProxy) this.placeSegment(handles.pickProxy, frame);
-      handles.jointBase.position.set(...frame.base);
+      this.placeJoint(handles.jointBase, frame.base, frame.dir);
       if (handles.jointTip) {
-        handles.jointTip.position.set(...frame.tip);
+        this.placeJoint(handles.jointTip, frame.tip, frame.dir);
+      }
+    }
+    // Surface root lobes track root base
+    if (this.flareLobeSpecs.length) {
+      const root = Object.values(tree.nodes).find((n) => n.parentId === null);
+      const frame = root ? frames.get(root.id) : undefined;
+      if (frame) {
+        for (const lobe of this.flareLobeSpecs) {
+          this.placeFlareLobe(lobe, frame);
+        }
       }
     }
 
@@ -417,7 +443,7 @@ export class TreeRenderer {
     let r0 = this.visualRadius(node.radius);
     // Nebari flare on root + near-root — trunk seats in soil, not a pole in cake
     if (node.parentId === null) {
-      r0 *= 2.35;
+      r0 *= 2.65;
     } else {
       // Depth-aware taper boost for presentation
       let depth = 0;
@@ -426,22 +452,41 @@ export class TreeRenderer {
         depth += 1;
         p = tree.nodes[p]?.parentId ?? null;
       }
-      if (depth <= 1) r0 *= 1.35;
-      else if (depth === 2) r0 *= 1.12;
+      if (depth <= 1) r0 *= 1.42;
+      else if (depth === 2) r0 *= 1.15;
     }
+
+    // Parent→child radius continuity: start child near parent tip radius
+    if (node.parentId) {
+      const parent = tree.nodes[node.parentId];
+      if (parent) {
+        // Prefer already-built parent tip; else estimate from parent radius
+        let parentTipR = this.poseHandles.get(node.parentId)?.r1;
+        if (parentTipR == null) {
+          let pr = this.visualRadius(parent.radius);
+          if (parent.parentId === null) pr *= 2.65;
+          parentTipR = pr * 0.78;
+        }
+        // Soft blend — avoid hard step-down at crotch
+        r0 = Math.max(r0, parentTipR * 0.72);
+        r0 = Math.min(r0, parentTipR * 1.08);
+      }
+    }
+
     let r1 = r0 * 0.78;
     if (node.children.length) {
       let sum = 0;
       for (const c of node.children) {
         sum += this.visualRadius(tree.nodes[c]?.radius ?? node.radius * 0.7);
       }
-      r1 = Math.min(r0 * 0.92, (sum / node.children.length) * 1.05);
+      // Tip radius sits slightly above mean child base so crotch fills without a ball
+      r1 = Math.min(r0 * 0.9, (sum / node.children.length) * 1.02);
     } else {
       r1 = r0 * 0.48;
     }
     // Stronger visual taper root→tip on long segments
     if (node.length > 0.02 && node.parentId === null) {
-      r1 = Math.min(r1, r0 * 0.62);
+      r1 = Math.min(r1, r0 * 0.58);
     }
 
     const mat = barkMaterialForSegment(this.barkMat!, node.length, node.radius);
@@ -452,6 +497,13 @@ export class TreeRenderer {
       mat.roughness = Math.max(0.5, 1 - youth * 0.28);
       if (mat.normalScale) {
         mat.normalScale.set(0.45 + youth * 0.2, 0.45 + youth * 0.2);
+      }
+    } else if (node.parentId === null) {
+      // Root/base bark: darker, rougher — reads as aged nebari
+      mat.color.offsetHSL(-0.02, -0.04, -0.08);
+      mat.roughness = Math.min(0.99, mat.roughness + 0.08);
+      if (mat.normalScale) {
+        mat.normalScale.set(1.4, 1.4);
       }
     } else {
       // Mature trunk: stronger normal, cooler tint
@@ -494,27 +546,54 @@ export class TreeRenderer {
       this.pickables.push(mesh);
     }
 
-    // Joint collar at base — hides cylinder seams (scales with visual r)
-    const jointR = Math.max(r0 * 1.02, MIN_VISUAL_RADIUS);
-    const joint = new THREE.Mesh(this._jointGeo, mat);
-    joint.position.set(...frame.base);
-    joint.scale.set(jointR, jointR * 0.85, jointR);
-    joint.castShadow = true;
-    joint.receiveShadow = true;
-    joint.userData.nodeId = id;
-    this.branchGroup.add(joint);
+    // Joint collar at base — elongated capsule blend, not a ball bearing (#57).
+    // Root skips the base sphere (flare lobes + tapered cylinder seat the nebari;
+    // a sphere here left a hard ring seam in soil close-ups).
+    let joint: THREE.Mesh;
+    if (node.parentId === null) {
+      // Invisible placeholder so poseHandles stay uniform
+      joint = new THREE.Mesh(this._jointGeo, mat);
+      joint.visible = false;
+      joint.scale.set(r0, r0, r0);
+      this.placeJoint(joint, frame.base, frame.dir);
+      this.branchGroup.add(joint);
+    } else {
+      const jointR = Math.max(r0 * 0.98, MIN_VISUAL_RADIUS);
+      joint = new THREE.Mesh(this._jointGeo, mat);
+      // Local Y = branch axis after placeJoint; scale (perp, along, perp)
+      joint.scale.set(jointR * 0.92, jointR * 1.22, jointR * 0.92);
+      joint.castShadow = true;
+      joint.receiveShadow = true;
+      joint.userData.nodeId = id;
+      this.placeJoint(joint, frame.base, frame.dir);
+      this.branchGroup.add(joint);
+    }
 
-    // Tip joint when branching (collar into children)
+    // Tip joint when branching — sized to mean child, stretched along parent axis
     let tipJoint: THREE.Mesh | null = null;
     if (node.children.length > 0) {
-      const tipR = Math.max(r1 * 1.05, MIN_VISUAL_RADIUS);
+      let childR = r1;
+      let nC = 0;
+      for (const c of node.children) {
+        const cr = this.visualRadius(tree.nodes[c]?.radius ?? node.radius * 0.7);
+        childR += cr;
+        nC += 1;
+      }
+      const blendR = Math.max(childR / (nC + 1), MIN_VISUAL_RADIUS);
       tipJoint = new THREE.Mesh(this._jointGeo, mat);
-      tipJoint.position.set(...frame.tip);
-      tipJoint.scale.set(tipR, tipR * 0.86, tipR);
+      // Collar, not marble — slightly flattened on the perpendicular
+      tipJoint.scale.set(blendR * 0.94, blendR * 1.16, blendR * 0.94);
       tipJoint.castShadow = true;
       tipJoint.receiveShadow = true;
       tipJoint.userData.nodeId = id;
+      this.placeJoint(tipJoint, frame.tip, frame.dir);
       this.branchGroup.add(tipJoint);
+    }
+
+    const flareLobes: THREE.Mesh[] = [];
+    if (node.parentId === null) {
+      // Surface root flare lobes — visual only, seats trunk in soil
+      this.addRootFlareLobes(frame, r0, mat, flareLobes);
     }
 
     this.poseHandles.set(id, {
@@ -522,9 +601,78 @@ export class TreeRenderer {
       jointBase: joint,
       jointTip: tipJoint,
       pickProxy,
+      flareLobes,
       r0,
       r1,
     });
+  }
+
+  /**
+   * Orient a joint ellipsoid so local +Y follows branch direction.
+   * Scale is set by caller (perp, along, perp) for capsule-like collars.
+   */
+  private placeJoint(
+    mesh: THREE.Mesh,
+    pos: readonly [number, number, number],
+    dir: readonly [number, number, number],
+  ): void {
+    mesh.position.set(pos[0], pos[1], pos[2]);
+    this._vDir.set(dir[0], dir[1], dir[2]).normalize();
+    if (this._vDir.lengthSq() < 1e-8) this._vDir.set(0, 1, 0);
+    mesh.quaternion.setFromUnitVectors(UP, this._vDir);
+  }
+
+  /** Visual-only surface roots at nebari — tapered lobes into soil plane. */
+  private addRootFlareLobes(
+    frame: NodeWorld,
+    baseR: number,
+    mat: THREE.Material,
+    out: THREE.Mesh[],
+  ): void {
+    // Deterministic 5-lobe flare; lengths vary slightly for organic read
+    const lobes = 5;
+    for (let i = 0; i < lobes; i++) {
+      const az = (i / lobes) * Math.PI * 2 + 0.41;
+      const len = baseR * (2.4 + (i % 3) * 0.35);
+      const rBase = baseR * (0.42 - (i % 2) * 0.06);
+      const rTip = rBase * 0.22;
+      const pitch = 0.22 + (i % 3) * 0.04; // slight dig into soil
+      const geo = new THREE.CylinderGeometry(
+        Math.max(0.0004, rTip),
+        Math.max(0.0005, rBase),
+        1,
+        8,
+        1,
+        false,
+      );
+      const mesh = new THREE.Mesh(geo, mat);
+      mesh.castShadow = true;
+      mesh.receiveShadow = true;
+      mesh.userData.nodeId = 'root';
+      const spec: FlareLobeSpec = { mesh, azimuth: az, length: len, pitch };
+      this.placeFlareLobe(spec, frame);
+      this.branchGroup.add(mesh);
+      this.flareLobeSpecs.push(spec);
+      out.push(mesh);
+    }
+  }
+
+  private placeFlareLobe(spec: FlareLobeSpec, frame: NodeWorld): void {
+    this._vBase.set(...frame.base);
+    // Prefer horizontal outward from trunk; fall back if base is odd
+    const outX = Math.cos(spec.azimuth);
+    const outZ = Math.sin(spec.azimuth);
+    // Direction: mostly radial + slight down into soil
+    this._vDir.set(outX * Math.cos(spec.pitch), -Math.sin(spec.pitch), outZ * Math.cos(spec.pitch)).normalize();
+    // Lobe origin at root base, offset slightly outward so it reads as flare not stick-through
+    const start = this._vBase
+      .clone()
+      .add(new THREE.Vector3(outX, 0, outZ).multiplyScalar(0.0008));
+    // Cylinder is unit along +Y; center at mid-lobe
+    const mid = start.clone().addScaledVector(this._vDir, spec.length * 0.5);
+    spec.mesh.position.copy(mid);
+    spec.mesh.scale.set(1, spec.length, 1);
+    spec.mesh.quaternion.setFromUnitVectors(UP, this._vDir);
   }
 
   private makeTaperedSegment(
@@ -561,6 +709,7 @@ export class TreeRenderer {
   /**
    * Juniper pad language: elliptical pad clouds with density falloff and
    * intentional negative space — not per-internode bottle-brush confetti.
+   * Pads originate on bark (origin cluster) then fan outward.
    */
   private collectScales(
     node: Internode,
@@ -592,7 +741,7 @@ export class TreeRenderer {
     const padCenters: Array<{ t: number; side: number; elev: number }> = [];
     if (isTip) {
       // One primary tip pad + optional small secondary for silhouette gaps
-      padCenters.push({ t: 0.72, side: 0, elev: 0.15 });
+      padCenters.push({ t: 0.72, side: 0.15, elev: 0.12 });
       if (len > 0.012) padCenters.push({ t: 0.42, side: 0.55, elev: -0.1 });
       if (len > 0.022) padCenters.push({ t: 0.55, side: -0.65, elev: 0.05 });
     } else {
@@ -603,8 +752,8 @@ export class TreeRenderer {
         const f = living[i] ?? living[0];
         padCenters.push({
           t: f?.t ?? 0.5,
-          side: Math.sin(f?.azimuth ?? i) * 0.4,
-          elev: Math.cos((f?.azimuth ?? i) * 1.3) * 0.2,
+          side: Math.sin(f?.azimuth ?? i) * 0.55 || 0.4,
+          elev: Math.cos((f?.azimuth ?? i) * 1.3) * 0.25,
         });
       }
     }
@@ -617,25 +766,69 @@ export class TreeRenderer {
 
     for (let pi = 0; pi < padCenters.length; pi++) {
       const pad = padCenters[pi];
-      const center = base
+      // Radial attach direction on bark (not floating beside wood)
+      const attachDir = normal
+        .clone()
+        .multiplyScalar(pad.side || 0.2)
+        .addScaledVector(binormal, pad.elev)
+        .normalize();
+      if (attachDir.lengthSq() < 1e-6) attachDir.copy(normal);
+
+      const onBark = base
         .clone()
         .addScaledVector(dir, pad.t * len)
-        .addScaledVector(normal, pad.side * r * 2.2)
-        .addScaledVector(binormal, pad.elev * r * 1.6);
+        .addScaledVector(attachDir, r * 0.95);
 
-      // Elliptical pad cloud — denser core, soft falloff edge
-      const count = isTip ? (pi === 0 ? 36 : 18) : 14;
-      const rx = isTip ? 0.0065 + r * 1.8 : 0.0042 + r * 1.2;
-      const ry = isTip ? 0.0042 + r * 1.1 : 0.0028 + r * 0.8;
-      const rz = isTip ? 0.0055 + r * 1.4 : 0.0035 + r * 1.0;
-      const scaleBase = isTip ? 0.0032 : 0.0022;
+      // Origin cluster — dense tiny scales seated on bark before pad fans out
+      const originCount = isTip && pi === 0 ? 10 : 6;
+      for (let oi = 0; oi < originCount; oi++) {
+        const u = (oi + 0.5) / originCount;
+        const ang = u * Math.PI * 2 + pi * 0.9 + node.ageDays * 0.01;
+        const spread = r * (0.15 + (oi % 3) * 0.08);
+        const along = ((oi % 5) - 2) * r * 0.12;
+        const opos = onBark
+          .clone()
+          .addScaledVector(attachDir, r * 0.08 + (oi % 2) * 0.00015)
+          .addScaledVector(dir, along)
+          .addScaledVector(
+            normal.clone().multiplyScalar(Math.cos(ang)).addScaledVector(binormal, Math.sin(ang)),
+            spread,
+          );
+        const osc = 0.0011 + (oi % 3) * 0.00015;
+        out.push({
+          position: opos,
+          quaternion: new THREE.Quaternion().setFromUnitVectors(
+            new THREE.Vector3(0, 0, 1),
+            attachDir
+              .clone()
+              .multiplyScalar(0.65)
+              .addScaledVector(dir, 0.35)
+              .normalize(),
+          ),
+          scale: new THREE.Vector3(osc * 1.05, osc * 1.2, osc),
+          tip: tipGrowth && isTip && pi === 0 && oi < 3,
+        });
+      }
+
+      // Pad cloud fans outward from bark origin (keep mass near wood)
+      const center = onBark
+        .clone()
+        .addScaledVector(attachDir, (isTip ? 0.0022 : 0.0014) + r * 0.35)
+        .addScaledVector(dir, isTip && pi === 0 ? 0.0008 : 0);
+
+      const count = isTip ? (pi === 0 ? 34 : 16) : 12;
+      const rx = isTip ? 0.0055 + r * 1.4 : 0.0034 + r * 1.0;
+      const ry = isTip ? 0.0034 + r * 0.9 : 0.0022 + r * 0.65;
+      const rz = isTip ? 0.0044 + r * 1.1 : 0.0026 + r * 0.8;
+      const scaleBase = isTip ? 0.0028 : 0.0019;
 
       for (let i = 0; i < count; i++) {
         // Deterministic quasi-uniform in unit ball shell
         const u = (i + 0.5) / count;
         const ang = u * Math.PI * 2 * 2.7 + pi * 1.7 + node.ageDays * 0.02;
         const elev = Math.asin(2 * ((i * 0.618) % 1) - 1);
-        const fall = 0.25 + 0.75 * ((i * 7) % 10) / 10;
+        // Bias density toward bark (fall closer to origin on inner half)
+        const fall = 0.2 + 0.8 * ((i * 7) % 10) / 10;
         const cosE = Math.cos(elev);
         const ox = Math.cos(ang) * cosE * rx * fall;
         const oy = Math.sin(elev) * ry * fall;
@@ -646,13 +839,19 @@ export class TreeRenderer {
           normal.y * ox + binormal.y * oz + dir.y * oy,
           normal.z * ox + binormal.z * oz + dir.z * oy,
         );
-        const pos = center.clone().add(spin);
+        // Keep inner scales closer to wood so pad "leaves" the shoot
+        const barkBias = 1 - fall * 0.35;
+        const pos = center
+          .clone()
+          .add(spin)
+          .addScaledVector(attachDir, -r * 0.15 * barkBias);
 
         const face = spin
           .clone()
           .normalize()
-          .multiplyScalar(0.55)
-          .addScaledVector(dir, 0.45)
+          .multiplyScalar(0.5)
+          .addScaledVector(dir, 0.35)
+          .addScaledVector(attachDir, 0.25)
           .normalize();
         if (face.lengthSq() < 1e-6) face.copy(dir);
 
@@ -674,7 +873,7 @@ export class TreeRenderer {
       }
     }
 
-    // Tiny tip apex cloud for silhouette read at thumbnail size
+    // Tiny tip apex cloud seated on shoot tip wood
     if (isTip) {
       for (let i = 0; i < 12; i++) {
         const ang = (i / 12) * Math.PI * 2;
@@ -684,15 +883,15 @@ export class TreeRenderer {
           normal.y * Math.cos(ang) + binormal.y * Math.sin(ang),
           normal.z * Math.cos(ang) + binormal.z * Math.sin(ang),
         ).normalize();
-        const sc = 0.002 + (i % 3) * 0.0002;
+        const sc = 0.0018 + (i % 3) * 0.0002;
         out.push({
           position: tip
             .clone()
-            .addScaledVector(dir, 0.0006 + elev * 0.0018)
-            .addScaledVector(spin2, r * 0.4 + elev * 0.0015),
+            .addScaledVector(dir, 0.0003 + elev * 0.0012)
+            .addScaledVector(spin2, r * 0.85 + elev * 0.001),
           quaternion: new THREE.Quaternion().setFromUnitVectors(
             new THREE.Vector3(0, 0, 1),
-            spin2.clone().multiplyScalar(0.4).addScaledVector(dir, 0.8).normalize(),
+            spin2.clone().multiplyScalar(0.45).addScaledVector(dir, 0.75).normalize(),
           ),
           scale: new THREE.Vector3(sc, sc * 1.3, sc),
           tip: true,

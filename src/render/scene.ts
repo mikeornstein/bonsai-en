@@ -329,14 +329,17 @@ export class BonsaiScene {
    */
   setView(view: CameraViewName): void {
     if (view === 'default') {
-      if (this.view !== 'default') {
-        this.perspectiveCamera.position.copy(this.savedPerspPos);
-        this.controls.target.copy(this.savedPerspTarget);
-        this.controls.enabled = this.savedControlsEnabled;
-        this.controls.enableDamping = true;
-        this.controls.object = this.perspectiveCamera;
-        this.controls.update();
-      }
+      // Restore play pose + FOV (close-ups may have narrowed it)
+      this.perspectiveCamera.position.copy(this.savedPerspPos);
+      this.perspectiveCamera.fov = 32;
+      this.perspectiveCamera.near = 0.01;
+      this.perspectiveCamera.far = 50;
+      this.perspectiveCamera.updateProjectionMatrix();
+      this.controls.target.copy(this.savedPerspTarget);
+      this.controls.enabled = this.savedControlsEnabled;
+      this.controls.enableDamping = true;
+      this.controls.object = this.perspectiveCamera;
+      this.controls.update();
       this.view = 'default';
       this.camera = this.perspectiveCamera;
       this.post?.setCamera(this.camera);
@@ -420,6 +423,70 @@ export class BonsaiScene {
 
   getView(): CameraViewName {
     return this.view;
+  }
+
+  /**
+   * Perspective close-up for detail audit plates (nebari / joints / foliage).
+   * Target is soil-local tree space (same as `listNodes().tipX/Y/Z` / base*).
+   * Physics should be frozen by the harness. Call `setView('default')` to exit.
+   */
+  setCloseUp(opts: {
+    x: number;
+    y: number;
+    z: number;
+    distance?: number;
+    /** Radians around +Y from +Z (0 = front). */
+    azimuth?: number;
+    /** Radians above horizontal. */
+    elevation?: number;
+    fov?: number;
+  }): void {
+    // Snapshot play pose once when leaving free orbit
+    if (this.view === 'default' && this.controls.enabled) {
+      this.savedPerspPos.copy(this.perspectiveCamera.position);
+      this.savedPerspTarget.copy(this.controls.target);
+      this.savedControlsEnabled = this.controls.enabled;
+    }
+
+    // Stay on perspective camera (not ortho audit)
+    this.view = 'default';
+    this.camera = this.perspectiveCamera;
+    this.post?.setCamera(this.camera);
+
+    // Frames are tree-group local; stage lifts by PEDESTAL_HEIGHT
+    const target = new THREE.Vector3(
+      opts.x,
+      PEDESTAL_HEIGHT + this.treeRenderer.group.position.y + opts.y,
+      opts.z,
+    );
+
+    const dist = opts.distance ?? 0.08;
+    const az = opts.azimuth ?? 0.35;
+    const el = opts.elevation ?? 0.28;
+    const fov = opts.fov ?? 28;
+
+    const cam = this.perspectiveCamera;
+    cam.fov = fov;
+    cam.near = 0.005;
+    cam.far = 20;
+    cam.aspect =
+      Math.max(window.innerWidth, 1) / Math.max(window.innerHeight, 1);
+    cam.updateProjectionMatrix();
+
+    const cosEl = Math.cos(el);
+    cam.position.set(
+      target.x + Math.sin(az) * cosEl * dist,
+      target.y + Math.sin(el) * dist,
+      target.z + Math.cos(az) * cosEl * dist,
+    );
+    cam.up.set(0, 1, 0);
+    cam.lookAt(target);
+
+    this.controls.object = cam;
+    this.controls.target.copy(target);
+    this.controls.enabled = false;
+    this.controls.enableDamping = false;
+    this.controls.update();
   }
 
   markDirty(): void {

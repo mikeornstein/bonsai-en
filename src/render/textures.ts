@@ -189,8 +189,9 @@ export function createFoliageAlbedoTexture(
           const taper = 1 + Math.max(0, -ny) * 0.45;
           const r2 = nx * nx * taper + ny * ny;
           const edge = Math.max(0, 1 - r2);
+          // Softer alpha falloff so pad silhouettes don't read as cardboard cutouts
           const alpha =
-            edge > 0.015 ? Math.min(1, Math.pow(edge, 0.55) * 1.35) : 0;
+            edge > 0.008 ? Math.min(1, Math.pow(edge, 0.72) * 1.22) : 0;
           const vein = 1 - Math.abs(nx) * 0.35;
           const n = fbm(x * 0.08, y * 0.08, 2);
           const mid = 1 + (1 - Math.abs(nx) * 2.2) * 0.08 * Math.max(0, edge);
