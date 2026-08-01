@@ -245,6 +245,28 @@ await page.evaluate(() => {
 await sleep(400);
 await snap('06-final-product.png');
 
+// ── 7. Shape pack smoke (#72): cascade + literati grades on sapling ────────
+await page.evaluate(() => {
+  window.__bonsai.newSapling();
+  window.__bonsai.setSumiChallenge(true);
+  window.__bonsai.setPracticePack('cascade');
+});
+await sleep(800);
+const sCascade = await score();
+const packCascade = await page.evaluate(() => window.__bonsai.getPracticePack());
+note(`T-cascade pack=${JSON.stringify(packCascade)} score=${JSON.stringify(sCascade)}`);
+await frontOrtho('07-front-cascade-pack.png');
+
+await page.evaluate(() => window.__bonsai.setPracticePack('literati'));
+await sleep(600);
+const sLiterati = await score();
+const packLiterati = await page.evaluate(() => window.__bonsai.getPracticePack());
+note(`T-literati pack=${JSON.stringify(packLiterati)} score=${JSON.stringify(sLiterati)}`);
+await frontOrtho('08-front-literati-pack.png');
+
+// Restore default moyogi for any follow-on consumers
+await page.evaluate(() => window.__bonsai.setPracticePack('moyogi'));
+
 const series = [
   { t: 'T0 sapling', ...s0 },
   { t: 'T1 wild Years', ...s1 },
@@ -263,6 +285,10 @@ const report = {
   series,
   best,
   deltaT0toT5: delta,
+  packs: {
+    cascade: { pack: packCascade, score: sCascade },
+    literati: { pack: packLiterati, score: sLiterati },
+  },
   log,
   interpretation: {
     canImproveWithTools: delta > 0.02 || s5.score > s1.score,
@@ -271,7 +297,8 @@ const report = {
     notes: [
       'Score = 0.28·containment + 0.26·bandFit + 0.18·centerline + 0.14·height + 0.14·presence',
       'Grades: far <0.45, forming <0.72, close <0.82, match ≥0.82',
-      'Target: ~25cm informal-upright (moyogi) pad in the front plane',
+      'Default target: ~25cm informal-upright (moyogi) pad in the front plane',
+      'Packs (#72): moyogi (default) · cascade · literati — menu Shape: cycle',
     ],
   },
 };
@@ -296,6 +323,19 @@ md.push('');
 md.push(`**Best:** ${best.t} · ${best.grade} · ${best.score.toFixed(3)}`);
 md.push('');
 md.push(`**Δ score T0→T5:** ${delta.toFixed(3)}`);
+md.push('');
+md.push('## Shape packs (#72 smoke)');
+md.push('');
+md.push(
+  `| Pack | Grade | Score | packId |`,
+);
+md.push('|------|-------|-------|--------|');
+md.push(
+  `| cascade | ${sCascade.grade} | ${sCascade.score.toFixed(3)} | ${sCascade.packId ?? packCascade.id} |`,
+);
+md.push(
+  `| literati | ${sLiterati.grade} | ${sLiterati.score.toFixed(3)} | ${sLiterati.packId ?? packLiterati.id} |`,
+);
 md.push('');
 md.push('## Interpretation');
 md.push('');

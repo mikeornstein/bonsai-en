@@ -56,6 +56,14 @@ import {
   type ChecklistStepId,
 } from '../sim/practice/checklist';
 import {
+  cyclePracticePack,
+  getActivePracticePack,
+  isPracticePackId,
+  setActivePracticePack,
+  type PracticePack,
+  type PracticePackId,
+} from '../sim/practice/target';
+import {
   computeLiveWorldFrames,
   createPhysicsWorld,
   freezePhysics,
@@ -364,9 +372,45 @@ export class Game {
     };
   }
 
-  /** Quantitative match of living silhouette to sumi practice target. */
+  /** Quantitative match of living silhouette to active sumi practice pack. */
   getPracticeScore(): PracticeScore {
-    return scorePracticeMatch(this.tree);
+    return scorePracticeMatch(this.tree, getActivePracticePack());
+  }
+
+  /** Active practice silhouette pack (moyogi default). */
+  getPracticePack(): PracticePack {
+    return getActivePracticePack();
+  }
+
+  /**
+   * Set or cycle practice shape pack. Rebuilds sumi ghost + rescores.
+   * Preference persists in localStorage `bonsai-en:practice-pack`.
+   */
+  setPracticePack(
+    idOrCycle: PracticePackId | 'cycle' | string,
+    opts?: { persist?: boolean },
+  ): PracticePack {
+    const persist = opts?.persist !== false;
+    const pack =
+      idOrCycle === 'cycle'
+        ? cyclePracticePack()
+        : setActivePracticePack(idOrCycle);
+    this.scene.sumi.setPack(pack);
+    this.syncPackButton(pack);
+    if (persist) writePracticePackId(pack.id);
+    if (this.scene.sumi.isEnabled()) {
+      const s = this.getPracticeScore();
+      this.scene.sumi.applyScoreFeedback(s);
+      this.setStatus(s.label);
+      this.lastPracticeLabel = s.label;
+      if (pack.hint) {
+        this.hintEl.textContent = pack.hint;
+        this.hintEl.style.opacity = '0.85';
+      }
+    } else {
+      this.setStatus(`Shape: ${pack.name} (Practice off)`);
+    }
+    return pack;
   }
 
   /**
@@ -378,6 +422,7 @@ export class Game {
     const persist = opts?.persist !== false;
     this.scene.sumi.setEnabled(on);
     if (on) {
+      this.scene.sumi.setPack(getActivePracticePack());
       // Soft snap so ink, score, and eyes share the front plane
       if (this.scene.isPlayView()) {
         this.scene.snapToFrontFace();
@@ -491,10 +536,19 @@ export class Game {
         'Score is front silhouette · Lock front in ⋯';
       this.hintEl.style.opacity = '0.8';
     } else {
+      const pack = getActivePracticePack();
       this.hintEl.textContent =
+        pack.hint ??
         'Match the ink · prune outside · wire the trunk · grow into the pad';
       this.hintEl.style.opacity = '0.85';
     }
+  }
+
+  private syncPackButton(pack: PracticePack = getActivePracticePack()): void {
+    const btn = document.getElementById('btn-practice-pack');
+    if (!btn) return;
+    btn.textContent = `Shape: ${pack.name}`;
+    btn.title = `Cycle practice silhouette (current: ${pack.name}). Affects sumi ghost + grade when Practice is on.`;
   }
 
   /**
@@ -503,8 +557,13 @@ export class Game {
    * Front snap runs after first frameTree (see constructor rAF).
    */
   private applyBootPracticeMode(): void {
+    const packId = readPracticePackId();
+    const pack = setActivePracticePack(packId);
+    this.syncPackButton(pack);
+
     const on = readPlayMode() === 'practice';
     this.scene.sumi.setEnabled(on);
+    if (on) this.scene.sumi.setPack(pack);
     this.syncPracticeButton(on);
     this.setPracticeMetaVisible(on);
     this.syncFrontLockButton(on);
@@ -523,8 +582,9 @@ export class Game {
     const status = this.statusEl.textContent?.trim() ?? '';
     if (!status) this.setStatus(s.label);
     this.syncPracticeBestMeta(true);
-    // First-run / practice-default hint (shokunin-aligned)
+    // First-run / practice-default hint (pack-specific when available)
     this.hintEl.textContent =
+      pack.hint ??
       'Match the ink · prune outside · wire the trunk · grow into the pad';
     this.hintEl.style.opacity = '0.85';
     // Default tool is Inspect — show overflow coach when practice is on
@@ -1023,6 +1083,11 @@ export class Game {
     document.getElementById('btn-front-lock')?.addEventListener('click', () => {
       closeFiles();
       this.setFrontLock(!this.scene.isFrontLock());
+    });
+
+    document.getElementById('btn-practice-pack')?.addEventListener('click', () => {
+      closeFiles();
+      this.setPracticePack('cycle');
     });
 
     window.addEventListener('keydown', (e) => {
@@ -1678,6 +1743,8 @@ export class Game {
 const WIRE_BENT_ONCE_KEY = 'bonsai-en:wire-bent-once';
 /** Play mode preference: practice (default) | sandbox (free train). */
 const MODE_KEY = 'bonsai-en:mode';
+/** Practice silhouette pack: moyogi (default) | cascade | literati. */
+const PACK_KEY = 'bonsai-en:practice-pack';
 
 type PlayMode = 'practice' | 'sandbox';
 
@@ -1711,6 +1778,25 @@ function readPlayMode(): PlayMode {
 function writePlayMode(mode: PlayMode): void {
   try {
     localStorage.setItem(MODE_KEY, mode);
+  } catch {
+    // private mode / quota
+  }
+}
+
+/** First visit and unknown values default to moyogi. */
+function readPracticePackId(): PracticePackId {
+  try {
+    const v = localStorage.getItem(PACK_KEY);
+    if (v && isPracticePackId(v)) return v;
+    return 'moyogi';
+  } catch {
+    return 'moyogi';
+  }
+}
+
+function writePracticePackId(id: PracticePackId): void {
+  try {
+    localStorage.setItem(PACK_KEY, id);
   } catch {
     // private mode / quota
   }

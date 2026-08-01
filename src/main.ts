@@ -3,6 +3,7 @@ import type { SpeedMode } from './sim/time';
 import type { CameraViewName } from './render/scene';
 import type { Vec3 } from './sim/types';
 import type { PracticeScore } from './sim/practice/score';
+import type { PracticePackId } from './sim/practice/target';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 if (!canvas) {
@@ -63,6 +64,16 @@ export interface BonsaiHarness {
   isFrontLock(): boolean;
   /** Soft-snap play camera to front face (perspective; not ortho audit). */
   snapToFrontFace(): void;
+  /**
+   * Set practice silhouette pack (`moyogi` | `cascade` | `literati`) or
+   * `'cycle'`. Rebuilds ghost + rescores. Persists as bonsai-en:practice-pack.
+   */
+  setPracticePack(id: PracticePackId | 'cycle' | string): {
+    id: PracticePackId;
+    name: string;
+  };
+  /** Active practice pack summary. */
+  getPracticePack(): { id: PracticePackId; name: string; height: number };
   setMuted(on: boolean): void;
   getPhysicsTelemetry(): {
     maxOmega: number;
@@ -157,6 +168,14 @@ try {
     },
     snapToFrontFace() {
       game.scene.snapToFrontFace();
+    },
+    setPracticePack(id: PracticePackId | 'cycle' | string) {
+      const pack = game.setPracticePack(id);
+      return { id: pack.id, name: pack.name };
+    },
+    getPracticePack() {
+      const pack = game.getPracticePack();
+      return { id: pack.id, name: pack.name, height: pack.height };
     },
     getPracticeScore() {
       return game.getPracticeScore();

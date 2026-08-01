@@ -1,19 +1,17 @@
 /**
  * Shokunin (craftsman) practice helpers — pure sim, no Three.js.
  *
- * Encodes disciplined moyogi training decisions used by the automated
+ * Encodes disciplined training decisions used by the automated
  * practice path (`scripts/practice-shokunin.mjs`) and unit tests:
  *   - rank overflow tips by envelope / front logic (not "longest leaves")
  *   - identify primary trunk chain
- *   - sample PRACTICE_STEM bend directions for wire set
+ *   - sample active pack stem bend directions for wire set
+ *
+ * Multi-pack (#72): helpers default to getActivePracticePack() geometry.
  */
 import { computeWorldFrames } from '../tree';
 import type { Internode, NodeId, TreeState, Vec3 } from '../types';
-import {
-  PRACTICE_HEIGHT,
-  PRACTICE_STEM,
-  practiceTargetPolygon,
-} from './target';
+import { getActivePracticePack, type PracticePack } from './target';
 
 /** Coach / status copy for a ranked overflow tip (Practice + Inspect). */
 export type OverflowReason =
@@ -81,13 +79,16 @@ function pointInPoly(
  */
 export function targetHalfWidthAt(
   y: number,
-  poly: Array<[number, number]> = practiceTargetPolygon(),
+  poly?: Array<[number, number]>,
+  pack: PracticePack = getActivePracticePack(),
 ): number {
+  const p = poly ?? pack.polygon();
+  const scanHalf = Math.max(pack.halfWidth * 1.5, 0.1);
   let minX = Infinity;
   let maxX = -Infinity;
   for (let i = 0; i < 64; i++) {
-    const x = -0.1 + (i / 63) * 0.2;
-    if (pointInPoly(x, y, poly)) {
+    const x = -scanHalf + (i / 63) * (2 * scanHalf);
+    if (pointInPoly(x, y, p)) {
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
     }
@@ -109,12 +110,13 @@ export function targetHalfWidthAt(
  */
 export function rankOverflowPruneTargets(
   tree: TreeState,
-  opts: { max?: number; minKey?: number } = {},
+  opts: { max?: number; minKey?: number; pack?: PracticePack } = {},
 ): OverflowRanked[] {
   const max = opts.max ?? 16;
   const minKey = opts.minKey ?? 0.004;
+  const pack = opts.pack ?? getActivePracticePack();
   const frames = computeWorldFrames(tree);
-  const poly = practiceTargetPolygon();
+  const poly = pack.polygon();
   const ranked: OverflowRanked[] = [];
 
   for (const node of Object.values(tree.nodes)) {
@@ -126,13 +128,13 @@ export function rankOverflowPruneTargets(
     const tipX = f.tip[0];
     const tipY = f.tip[1];
     const tipZ = f.tip[2];
-    const halfW = Math.max(targetHalfWidthAt(tipY, poly), 0.006);
+    const halfW = Math.max(targetHalfWidthAt(tipY, poly, pack), 0.006);
     const outsidePoly = !pointInPoly(tipX, tipY, poly);
     const lateralOver = Math.max(0, Math.abs(tipX) - halfW);
-    const heightOver = Math.max(0, tipY - PRACTICE_HEIGHT);
+    const heightOver = Math.max(0, tipY - pack.height);
     const depthPenalty = Math.max(0, Math.abs(tipZ) - 0.018);
     const lowFat =
-      tipY < PRACTICE_HEIGHT * 0.34 && Math.abs(tipX) > halfW * 0.85
+      tipY < pack.height * 0.34 && Math.abs(tipX) > halfW * 0.85
         ? 0.025
         : 0;
 
@@ -186,7 +188,8 @@ export function primaryStemNodeIds(tree: TreeState): NodeId[] {
  * Suitable for successive `bend(nodeId, dir)` calls base → apex.
  */
 export function stemBendDirections(
-  stemPolyline: ReadonlyArray<readonly [number, number]> = PRACTICE_STEM,
+  stemPolyline: ReadonlyArray<readonly [number, number]> = getActivePracticePack()
+    .stem,
 ): Vec3[] {
   const dirs: Vec3[] = [];
   for (let i = 0; i < stemPolyline.length - 1; i++) {
@@ -208,7 +211,8 @@ export function stemBendDirections(
  */
 export function stemDirectionAtHeight(
   y: number,
-  stemPolyline: ReadonlyArray<readonly [number, number]> = PRACTICE_STEM,
+  stemPolyline: ReadonlyArray<readonly [number, number]> = getActivePracticePack()
+    .stem,
 ): Vec3 {
   if (stemPolyline.length < 2) return [0, 1, 0];
   // Find segment spanning y (or nearest)
@@ -236,10 +240,11 @@ export function stemDirectionAtHeight(
   return [dx / len, dy / len, 0.03 * Math.sign(dx || 1)];
 }
 
-/** Desired stem x at height y (linear sample on PRACTICE_STEM). */
+/** Desired stem x at height y (linear sample on pack stem / PRACTICE_STEM). */
 export function stemXAtHeight(
   y: number,
-  stemPolyline: ReadonlyArray<readonly [number, number]> = PRACTICE_STEM,
+  stemPolyline: ReadonlyArray<readonly [number, number]> = getActivePracticePack()
+    .stem,
 ): number {
   if (stemPolyline.length < 2) return 0;
   if (y <= stemPolyline[0][1]) return stemPolyline[0][0];

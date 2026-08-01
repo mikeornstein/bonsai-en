@@ -1,9 +1,9 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import { createSapling } from '../tree';
 import { tickDays } from '../growth';
 import { pruneAt } from '../tools/prune';
 import { scorePracticeMatch } from './score';
-import { PRACTICE_STEM } from './target';
+import { PRACTICE_STEM, setActivePracticePack } from './target';
 import {
   primaryOverflowReason,
   primaryStemNodeIds,
@@ -13,6 +13,10 @@ import {
   stemXAtHeight,
   targetHalfWidthAt,
 } from './shokunin';
+
+afterEach(() => {
+  setActivePracticePack('moyogi');
+});
 
 describe('shokunin practice helpers', () => {
   it('targetHalfWidthAt is positive mid-canopy and near zero at base', () => {
