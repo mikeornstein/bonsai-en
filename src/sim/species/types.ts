@@ -112,7 +112,13 @@ export interface SpeciesDefinition {
     woodDensity: number;
     youngModulusGreen: number;
     youngModulusLignified: number;
+    /** Scale α on k = α·(E I)/L (#94). */
+    stiffnessScale: number;
     dampingRatio: number;
+    dampingRatioGreen: number;
+    dampingRatioLignified: number;
+    tipDampingBoost: number;
+    tipRadiusRef: number;
     foliageMassScale: number;
     maxDeflectionRad: number;
     gravity: number;

@@ -1,15 +1,44 @@
 import type { NodeId, Vec3 } from '../types';
 
-/** Species + global physics tuning. */
+/**
+ * Species + global physics tuning.
+ *
+ * Bend stiffness is geometry-derived (beam theory):
+ *   I = π r⁴ / 4
+ *   E = lerp(E_green, E_lignified, smoothstep(lignification))
+ *   k = stiffnessScale · (E I) / L   (+ wire mult)
+ *
+ * Damping uses a geometry/state-varying ζ (#94), not a single sludge constant:
+ *   ζ = lerp(ζ_green, ζ_lignified, lignify) · (1 + tipBoost · thinness)
+ *   c = 2 ζ √(k J)
+ */
 export interface PhysicsMaterialParams {
   /** Wood density (relative kg/m³ scale). */
   woodDensity: number;
-  /** Young’s modulus for green wood (relative). */
+  /** Young’s modulus for green wood (visual tree units, not SI). */
   youngModulusGreen: number;
-  /** Young’s modulus for fully lignified wood (relative). */
+  /** Young’s modulus for fully lignified wood (visual tree units). */
   youngModulusLignified: number;
-  /** Damping ratio ζ for bend DOFs. */
+  /**
+   * Global scale α on beam stiffness k = α·(E I)/L.
+   * Raise to stiffen the whole tree without changing E ratio.
+   */
+  stiffnessScale: number;
+  /**
+   * Legacy / uniform ζ fallback when green/lignified not distinguished
+   * (tests may set this alone). Prefer dampingRatioGreen/Lignified.
+   */
   dampingRatio: number;
+  /** Damping ratio ζ for wet/green wood (higher = more sludge). */
+  dampingRatioGreen: number;
+  /** Damping ratio ζ for fully lignified wood (lower = livelier settle). */
+  dampingRatioLignified: number;
+  /**
+   * Extra ζ multiplier on thin tips: ζ *= 1 + tipDampingBoost · clamp(1 − r/r_ref, 0, 1).
+   */
+  tipDampingBoost: number;
+  /** Radius (m) below which tip damping boost ramps in. */
+  tipRadiusRef: number;
   /** Scales foliage biomass into mass units. */
   foliageMassScale: number;
   /** Soft angle clamp (radians). */
@@ -108,16 +137,22 @@ export interface PhysicsWorld {
 }
 
 /**
- * Defaults tuned for *visual* bonsai dynamics (slow sway), not structural FEA.
- * Over-stiff E + Euler → high-frequency ring that looks like vibration at rest.
+ * Defaults for visual bonsai dynamics after #83 denser internodes / #94 retune.
+ * Geometry (r, L, lignify) drives k and ζ; values are not structural SI FEA.
  */
 export const DEFAULT_PHYSICS_CONFIG: PhysicsConfig = {
   woodDensity: 650,
-  // Visual moduli (2× from 5.5e3 / 1.125e5)
-  youngModulusGreen: 1.1e4,
-  youngModulusLignified: 2.25e5,
-  // Extremely overdamped (10× prior 9.2) — free motion dies almost immediately
-  dampingRatio: 92,
+  // Stiffer visual moduli — thick lignified wood holds; tips stay relatively soft
+  youngModulusGreen: 2.4e4,
+  youngModulusLignified: 5.5e5,
+  stiffnessScale: 2.0,
+  // Fallback ζ if a caller only sets dampingRatio
+  dampingRatio: 1.4,
+  // Green more damped; lignified livelier (was uniform ζ=92 sludge)
+  dampingRatioGreen: 2.6,
+  dampingRatioLignified: 0.95,
+  tipDampingBoost: 1.4,
+  tipRadiusRef: 0.005,
   foliageMassScale: 3.5e-5,
   maxDeflectionRad: 0.35,
   gravity: 9.81 * 0.22,
@@ -125,13 +160,12 @@ export const DEFAULT_PHYSICS_CONFIG: PhysicsConfig = {
   wireStiffnessMult: 12,
   substeps: 3,
   fixedDt: 1 / 90,
-  // Very soft contacts (bias ~10× lower than prior soft pass)
   contactIterations: 1,
   contactSlop: 0.0015,
   contactBias: 0.01,
   frozen: false,
   collisions: true,
   sleepOmega: 0.06,
-  sleepFrames: 12,
+  sleepFrames: 14,
   wakeOmega: 0.12,
 };

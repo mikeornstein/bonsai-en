@@ -139,7 +139,7 @@ describe('physics dynamics', () => {
     j.omegaX = 0;
     j.sleeping = false;
 
-    for (let i = 0; i < 300; i++) {
+    for (let i = 0; i < 400; i++) {
       stepPhysics(world, tree, 1 / 60, {
         gravity: false,
         cameraAccel: [0, 0, 0],
@@ -148,10 +148,28 @@ describe('physics dynamics', () => {
       });
     }
     const tel = measureTelemetry(world);
-    // Extreme overdamping: velocity dies fast; angle creeps to 0 more slowly
-    expect(tel.maxOmega).toBeLessThan(0.05);
-    expect(Math.abs(j.thetaX)).toBeLessThan(0.2); // strictly decreased from 0.2
-    expect(Math.abs(j.thetaX)).toBeLessThan(0.19);
+    // Geometry ζ (#94): settles without residual buzz; angle relaxes toward 0
+    expect(tel.maxOmega).toBeLessThan(0.08);
+    expect(Math.abs(j.thetaX)).toBeLessThan(0.2);
+    expect(Math.abs(j.thetaX)).toBeLessThan(0.18);
+  });
+
+  it('live frames expose Hermite path for in-segment curvature (#94)', () => {
+    const tree = createSapling('juniper-procumbens', 5);
+    const world = createPhysicsWorld(tree);
+    const frames = computeLiveWorldFrames(tree, world);
+    let curved = 0;
+    for (const [id, f] of frames) {
+      if (id === tree.rootId) continue;
+      expect(f.path).toBeTruthy();
+      expect(f.path!.length).toBeGreaterThanOrEqual(3);
+      // Endpoints match joint chord
+      expect(f.path![0][0]).toBeCloseTo(f.base[0], 6);
+      expect(f.path![0][1]).toBeCloseTo(f.base[1], 6);
+      expect(f.path![f.path!.length - 1][0]).toBeCloseTo(f.tip[0], 6);
+      curved += 1;
+    }
+    expect(curved).toBeGreaterThan(3);
   });
 
   it('velocities converge to ~0 at rest under gravity alone (no camera)', () => {

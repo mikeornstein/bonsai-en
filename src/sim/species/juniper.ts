@@ -80,10 +80,15 @@ export const juniper: SpeciesDefinition = {
 
   physics: {
     woodDensity: 650,
-    // Visual-scale moduli (see DEFAULT_PHYSICS_CONFIG) — not FEA wood
-    youngModulusGreen: 1.1e4,
-    youngModulusLignified: 2.25e5,
-    dampingRatio: 92,
+    // Geometry-derived bend (#94): E·I/L with lignify + tip ζ; not SI FEA
+    youngModulusGreen: 2.4e4,
+    youngModulusLignified: 5.5e5,
+    stiffnessScale: 2.0,
+    dampingRatio: 1.4,
+    dampingRatioGreen: 2.6,
+    dampingRatioLignified: 0.95,
+    tipDampingBoost: 1.4,
+    tipRadiusRef: 0.005,
     foliageMassScale: 3.5e-5,
     maxDeflectionRad: 0.35,
     gravity: 9.81 * 0.22,
