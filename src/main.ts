@@ -75,6 +75,8 @@ export interface BonsaiHarness {
     nodeId: string,
   ): { ok: boolean; message: string };
   bend(nodeId: string, dir: Vec3): { ok: boolean; message: string };
+  /** Undo last structural edit (prune / pinch / wire / unwire / bend). */
+  undo(): boolean;
   getPerf(): PerfSample;
   saveNow(): void;
   exportJson(): string;
@@ -165,6 +167,9 @@ try {
     },
     bend(nodeId: string, dir: Vec3) {
       return game.bendNode(nodeId, dir);
+    },
+    undo() {
+      return game.undoLast();
     },
     getPerf() {
       return game.getPerf();
