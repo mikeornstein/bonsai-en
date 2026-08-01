@@ -3,8 +3,12 @@ import { getSpecies } from './species/juniper';
 import { environmentAt } from './time';
 import {
   addAxillaryBud,
+  addFoliagePad,
   chooseLateralAzimuth,
   extendFromBud,
+  foliageThinness,
+  nodeCarriesFoliage,
+  targetFoliagePads,
   totalFoliageArea,
   totalWoodyVolume,
 } from './tree';
@@ -111,10 +115,15 @@ function updateDominanceAndBuds(
   }
 }
 
+/**
+ * Age / drop foliage, then renew evergreen pads so Years FF cannot strip the
+ * canopy bare once the node-count cap stops new internodes (#63).
+ */
 function updateFoliage(
   tree: TreeState,
   species: ReturnType<typeof getSpecies>,
   seasonMul: number,
+  rng: () => number,
 ): number {
   let dead = 0;
   for (const node of Object.values(tree.nodes)) {
@@ -123,17 +132,30 @@ function updateFoliage(
       if (!f.living) continue;
       f.ageDays += 1;
       if (f.ageDays > species.foliageLifespanDays) {
-        f.efficiency = Math.max(0.15, f.efficiency - species.foliageSenescenceRate);
+        f.efficiency = Math.max(
+          0.15,
+          f.efficiency - species.foliageSenescenceRate,
+        );
       }
       // Stress senescence (deterministic via age hash)
       const noise = ((f.ageDays * 1103515245 + 12345) >>> 0) / 4294967296;
       if (tree.vigor < 0.35 && noise < 0.01) {
         f.efficiency *= 0.95;
       }
-      if (f.efficiency < 0.12 || (f.ageDays > species.foliageLifespanDays * 1.4 && seasonMul < 0.3)) {
-        if (species.evergreen && f.efficiency > 0.08 && noise > 0.02) {
-          continue;
-        }
+
+      const tooInefficient = f.efficiency < 0.12;
+      // Deciduous-style winter drop for non-evergreen (not used by juniper).
+      const winterDrop =
+        !species.evergreen &&
+        f.ageDays > species.foliageLifespanDays * 1.4 &&
+        seasonMul < 0.3;
+      // Evergreen needle turnover: slow drop once very old (~0.35%/day), not a
+      // rest-season mass strip that zeros the canopy under Years acceleration.
+      const evergreenTurnover =
+        species.evergreen &&
+        f.ageDays > species.foliageLifespanDays * 1.5 &&
+        noise < 0.0035;
+      if (tooInefficient || winterDrop || evergreenTurnover) {
         f.living = false;
         dead += 1;
       }
@@ -143,7 +165,74 @@ function updateFoliage(
       node.foliage = node.foliage.filter((f) => f.living);
     }
   }
+
+  if (species.evergreen) {
+    renewEvergreenFoliage(tree, species, seasonMul, rng);
+  }
   return dead;
+}
+
+/**
+ * Replace missing pads on thin living shoots. Without this, hitting the ~280
+ * node cap freezes topology and old pads die with nothing to replace them.
+ */
+function renewEvergreenFoliage(
+  tree: TreeState,
+  species: ReturnType<typeof getSpecies>,
+  seasonMul: number,
+  rng: () => number,
+): void {
+  if (tree.vigor < 0.3) return;
+
+  // Slow year-round turnover; faster in flush seasons.
+  const baseChance = 0.012 + 0.07 * Math.max(0.15, seasonMul);
+  const maxRenew = seasonMul > 0.5 ? 10 : 4;
+  let renewed = 0;
+
+  // Prefer distal thin tips (shuffle via rng-weighted pass)
+  const candidates = Object.values(tree.nodes).filter(
+    (n) => n.living && nodeCarriesFoliage(n, species),
+  );
+  for (let i = candidates.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    const tmp = candidates[i];
+    candidates[i] = candidates[j];
+    candidates[j] = tmp;
+  }
+
+  for (const node of candidates) {
+    if (renewed >= maxRenew) break;
+    const livingPads = node.foliage.reduce(
+      (n, f) => n + (f.living ? 1 : 0),
+      0,
+    );
+    const target = targetFoliagePads(node, species);
+    if (livingPads >= target) continue;
+    // Bare or sparse shoots reflush more eagerly
+    const need = target - livingPads;
+    const chance = livingPads === 0 ? Math.min(0.55, baseChance * 4) : baseChance;
+    if (rng() > chance) continue;
+
+    const thinness = foliageThinness(node, species);
+    const area =
+      species.foliageAreaPerInternode * (0.55 + 0.45 * thinness);
+    const t = 0.4 + rng() * 0.5;
+    if (addFoliagePad(tree, node.id, area, t)) {
+      renewed += 1;
+      // Extra pad on severely bare nodes in flush
+      if (
+        need > 1 &&
+        livingPads === 0 &&
+        seasonMul > 0.45 &&
+        renewed < maxRenew &&
+        rng() < 0.4
+      ) {
+        if (addFoliagePad(tree, node.id, area * 0.9, 0.55 + rng() * 0.3)) {
+          renewed += 1;
+        }
+      }
+    }
+  }
 }
 
 function pipeModelTargets(
@@ -393,8 +482,8 @@ export function tickDay(tree: TreeState): GrowthStats {
   // 6. Wire set + lignification
   applyWireAndLignification(tree, species, seasonMul);
 
-  // 7. Foliage
-  stats.deadFoliage = updateFoliage(tree, species, seasonMul);
+  // 7. Foliage (senescence + evergreen pad turnover)
+  stats.deadFoliage = updateFoliage(tree, species, seasonMul, rng);
 
   tree.agePlantDays += 1;
   return stats;

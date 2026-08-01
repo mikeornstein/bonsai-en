@@ -92,6 +92,65 @@ describe('growth', () => {
     // Stressed trees are not cushioned — reserves may stay in Low band
     expect(tree.vigor).toBeLessThan(0.55);
   });
+
+  /**
+   * Repro for #63: ~5 plant-years of Years FF from a fresh sapling used to
+   * hit the node cap, age out every pad, and leave a bare “dead” tree
+   * (foliageArea=0, reserves→0, vitality Low in flush season).
+   */
+  it('keeps living canopy through multi-year Years fast-forward (#63)', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    // ~5 plant-years at Years pace (~5s wall clock)
+    for (let i = 0; i < 1825; i++) tickDay(tree);
+
+    expect(countLivingNodes(tree)).toBeGreaterThan(50);
+    const foliage = totalFoliageArea(tree);
+    expect(foliage).toBeGreaterThan(0.01);
+
+    let livingPads = 0;
+    for (const n of Object.values(tree.nodes)) {
+      for (const f of n.foliage) {
+        if (f.living) livingPads += 1;
+      }
+    }
+    expect(livingPads).toBeGreaterThan(30);
+
+    // Solvent enough that the player does not read the tree as dead
+    expect(tree.reserves).toBeGreaterThan(0);
+    expect(tree.vigor).toBeGreaterThan(0.5);
+    const env = environmentAt(tree.agePlantDays);
+    // Not "Low" purely from multi-year aging (rest seasons may say Resting)
+    if (!['dormant', 'rest'].includes(env.season)) {
+      expect(vitalityWord(tree.reserves, env.season)).not.toBe('Low');
+    }
+  });
+
+  it('evergreen turnover restores pads after artificial defoliation (#63)', () => {
+    const tree = createSapling('juniper-procumbens', 11);
+    // Grow into flush with some structure
+    tickDays(tree, 80, 80);
+    // Strip all living pads (old bug end-state)
+    for (const n of Object.values(tree.nodes)) {
+      for (const f of n.foliage) f.living = false;
+      n.foliage = [];
+    }
+    expect(totalFoliageArea(tree)).toBe(0);
+
+    // Force spring flush window for eager reflush
+    tree.agePlantDays = 100;
+    tree.vigor = 0.95;
+    tree.reserves = 40;
+    for (let i = 0; i < 90; i++) tickDay(tree);
+
+    expect(totalFoliageArea(tree)).toBeGreaterThan(0.002);
+    let livingPads = 0;
+    for (const n of Object.values(tree.nodes)) {
+      for (const f of n.foliage) {
+        if (f.living) livingPads += 1;
+      }
+    }
+    expect(livingPads).toBeGreaterThan(5);
+  });
 });
 
 describe('min branch diameter (#58)', () => {
