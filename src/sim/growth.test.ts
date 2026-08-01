@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { tickDay, tickDays } from './growth';
+import { describeNode, tickDay, tickDays } from './growth';
 import { createRng, quatRotateVec3, vec3 } from './math';
 import { getSpecies } from './species/juniper';
 import {
@@ -373,5 +373,34 @@ describe('wire', () => {
     expect(setAmount).toBeGreaterThan(0.05);
     removeWire(tree, node.id);
     expect(tree.nodes[node.id].wire).toBeUndefined();
+  });
+
+  it('wireSetMult accelerates set under the same plant-days (#68)', () => {
+    const base = createSapling('juniper-procumbens', 17);
+    const boosted = createSapling('juniper-procumbens', 17);
+    const nBase = Object.values(base.nodes).find((n) => n.id !== base.rootId)!;
+    const nBoost = Object.values(boosted.nodes).find(
+      (n) => n.id !== boosted.rootId,
+    )!;
+    applyWire(base, nBase.id);
+    applyWire(boosted, nBoost.id);
+    tickDays(base, 40, 40, { wireSetMult: 1 });
+    tickDays(boosted, 40, 40, { wireSetMult: 1.6 });
+    const a = base.nodes[nBase.id].wire!.setAmount;
+    const b = boosted.nodes[nBoost.id].wire!.setAmount;
+    expect(b).toBeGreaterThan(a * 1.2);
+    // ~1.5–2s wall at Month (with mult) should leave glanceable progress
+    expect(b).toBeGreaterThan(0.08);
+  });
+
+  it('describeNode includes continuous wire set label while wired (#68)', () => {
+    const tree = createSapling('juniper-procumbens', 19);
+    const node = Object.values(tree.nodes).find((n) => n.id !== tree.rootId)!;
+    applyWire(tree, node.id);
+    tree.nodes[node.id].wire!.setAmount = 0.12;
+    const d = describeNode(tree, node.id);
+    expect(d).toMatch(/fresh wire · 12% set/);
+    tree.nodes[node.id].wire!.setAmount = 0.9;
+    expect(describeNode(tree, node.id)).toMatch(/wire set \(90%\)/);
   });
 });

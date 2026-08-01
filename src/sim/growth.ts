@@ -12,7 +12,18 @@ import {
   totalFoliageArea,
   totalWoodyVolume,
 } from './tree';
+import { wireSetLabel } from './tools/wire';
 import type { GrowthStats, Internode, TreeState } from './types';
+
+/** Optional per-tick growth knobs (UI speed → plant-time playability). */
+export interface TickOpts {
+  /**
+   * Multiplier on wire lignification / set rate (#68).
+   * Keep 1 at Live/Day for botanical pace; Month/Year may pass ~1.5–2 so
+   * short wall-clock waits still show glanceable set progress under lag.
+   */
+  wireSetMult?: number;
+}
 
 function nodeDepth(tree: TreeState, id: string): number {
   let d = 0;
@@ -289,6 +300,8 @@ function applyWireAndLignification(
   tree: TreeState,
   species: ReturnType<typeof getSpecies>,
   seasonMul: number,
+  /** Playability mult under Month/Year FF only (#68); Live stays botanical. */
+  wireSetMult = 1,
 ): void {
   for (const node of Object.values(tree.nodes)) {
     if (!node.living) continue;
@@ -304,8 +317,11 @@ function applyWireAndLignification(
         node.wire.targetOrientation[2],
         node.wire.targetOrientation[3],
       ];
+      // Base rate is botanical plant-days; wireSetMult accelerates only under
+      // wall-clock Month/Year so short Mo waits show glanceable set progress.
       const setDelta =
         species.wireSetRate *
+        Math.max(0, wireSetMult) *
         (0.4 + 0.6 * seasonMul) *
         (0.5 + node.lignification);
       node.wire.setAmount = clamp(node.wire.setAmount + setDelta, 0, 1);
@@ -316,7 +332,7 @@ function applyWireAndLignification(
 /**
  * Advance the tree by one plant-day. Pure-ish mutation of tree state.
  */
-export function tickDay(tree: TreeState): GrowthStats {
+export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
   const species = getSpecies(tree.speciesId);
   const env = environmentAt(tree.agePlantDays);
   const seasonMul =
@@ -324,6 +340,7 @@ export function tickDay(tree: TreeState): GrowthStats {
     (0.55 + 0.45 * env.temperature) *
     (0.5 + 0.5 * env.light) *
     tree.vigor;
+  const wireSetMult = opts?.wireSetMult ?? 1;
 
   const rng = createRng(
     (tree.seed + Math.floor(tree.agePlantDays) * 10007) >>> 0,
@@ -480,7 +497,7 @@ export function tickDay(tree: TreeState): GrowthStats {
   }
 
   // 6. Wire set + lignification
-  applyWireAndLignification(tree, species, seasonMul);
+  applyWireAndLignification(tree, species, seasonMul, wireSetMult);
 
   // 7. Foliage (senescence + evergreen pad turnover)
   stats.deadFoliage = updateFoliage(tree, species, seasonMul, rng);
@@ -493,10 +510,15 @@ export function tickDay(tree: TreeState): GrowthStats {
  * Advance multiple plant-days with fixed 1-day substeps.
  * Caps work per call for UI responsiveness.
  */
-export function tickDays(tree: TreeState, days: number, maxSteps = 64): number {
+export function tickDays(
+  tree: TreeState,
+  days: number,
+  maxSteps = 64,
+  opts?: TickOpts,
+): number {
   const steps = Math.min(Math.max(0, Math.floor(days)), maxSteps);
   for (let i = 0; i < steps; i++) {
-    tickDay(tree);
+    tickDay(tree, opts);
   }
   return steps;
 }
@@ -517,14 +539,8 @@ export function describeNode(tree: TreeState, nodeId: string): string {
         : 'young wood';
   const parts = [wood];
   if (n.wire) {
-    const pct = Math.round(n.wire.setAmount * 100);
-    parts.push(
-      n.wire.setAmount > 0.85
-        ? `wire set (${pct}%)`
-        : n.wire.setAmount > 0.35
-          ? `wiring · ${pct}% set`
-          : `fresh wire · ${pct}% set`,
-    );
+    // Continuous set % (same bands as status) — always present while wired (#68)
+    parts.push(wireSetLabel(n.wire.setAmount));
   }
   if (n.wound > 0.4) parts.push('fresh cut');
   else if (n.wound > 0.1) parts.push('healing');
