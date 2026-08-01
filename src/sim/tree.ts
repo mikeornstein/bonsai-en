@@ -15,6 +15,7 @@ import { getSpecies } from './species/juniper';
 import type { SpeciesDefinition } from './species/types';
 import type {
   Bud,
+  BudType,
   FoliageCluster,
   Internode,
   NodeId,
@@ -50,10 +51,113 @@ export function azimuthFromOrientation(orient: Quat): number {
   return Math.atan2(dir[0], dir[2]);
 }
 
-/** Off-axis angle of a child orientation from the parent local axis (radians). */
-function offAxisAngle(orient: Quat): number {
+/**
+ * Off-axis angle of a child orientation from the parent local +Y (radians).
+ * Terminal extensions sit near 0; laterals near `species.branchAngle`.
+ */
+export function offAxisAngle(orient: Quat): number {
   const dir = quatRotateVec3(orient, vec3(0, 1, 0));
   return Math.acos(clamp(dir[1], -1, 1));
+}
+
+/** Child counts as a true lateral (not collinear tip extension). */
+export const LATERAL_OFF_AXIS = 0.25;
+
+export function isLateralOrientation(orient: Quat): boolean {
+  return offAxisAngle(orient) > LATERAL_OFF_AXIS;
+}
+
+/** Living off-axis children on a node (forks, not the tip continuation). */
+export function countLateralChildren(tree: TreeState, node: Internode): number {
+  let n = 0;
+  for (const childId of node.children) {
+    const child = tree.nodes[childId];
+    if (child?.living && isLateralOrientation(child.orientation)) n += 1;
+  }
+  return n;
+}
+
+/** Non-dead axillary buds still sitting on the node (pending or flushing). */
+export function countPendingAxillary(node: Internode): number {
+  let n = 0;
+  for (const bud of node.buds) {
+    if (bud.type === 'axillary' && bud.state !== 'dead') n += 1;
+  }
+  return n;
+}
+
+/**
+ * How many lateral takeoffs from root to this node (0 = main stem).
+ * Used to keep low trunk clean while still ramifying secondary shoots (#87).
+ */
+export function branchOrder(tree: TreeState, nodeId: NodeId): number {
+  let order = 0;
+  let cur: Internode | undefined = tree.nodes[nodeId];
+  let guard = 0;
+  while (cur?.parentId && guard++ < 256) {
+    if (isLateralOrientation(cur.orientation)) order += 1;
+    cur = tree.nodes[cur.parentId];
+  }
+  return order;
+}
+
+/**
+ * Length of the collinear tip chain ending at `nodeId` (segments back to the
+ * last lateral takeoff or the root). Long runs read as spindly sticks (#87).
+ */
+export function unbranchedRunLength(tree: TreeState, nodeId: NodeId): number {
+  let run = 0;
+  let cur: Internode | undefined = tree.nodes[nodeId];
+  while (cur && run < 64) {
+    run += 1;
+    if (!cur.parentId) break;
+    // Lateral off parent starts a new shoot — stop counting ancestors
+    if (isLateralOrientation(cur.orientation)) break;
+    cur = tree.nodes[cur.parentId];
+  }
+  return run;
+}
+
+/**
+ * Internodes up the main stem that should not host new laterals.
+ * Keeps the very base clear without leaving a tall bare telephone pole (#87).
+ */
+export function minMainStemLateralDepth(stemNodes: number): number {
+  return Math.max(3, Math.floor(stemNodes * 0.28));
+}
+
+/**
+ * Soft cap on main-stem tip extensions past the sapling scaffold.
+ * Prevents a tower of pure-vertical leader internodes under Years FF (#87).
+ */
+export function maxMainStemNodes(stemNodes: number): number {
+  return stemNodes + 2;
+}
+
+/**
+ * Initial wood radius for a new shoot.
+ *
+ * - **Terminal** (axis continuation): mild taper from the parent.
+ * - **Axillary** (true branch): near-uniform tip size so a fork off thick trunk
+ *   is not born absurdly fat. Secondary / pipe growth fattens loaded limbs later.
+ *
+ * Previously laterals used `parent.radius * 0.62`, so low trunk forks started
+ * several× thicker than tip forks (#87).
+ */
+export function spawnShootRadius(
+  parentRadius: number,
+  budType: BudType,
+  species: SpeciesDefinition,
+): number {
+  if (budType === 'terminal') {
+    return Math.max(species.minRadius, parentRadius * 0.78);
+  }
+  // Axillary / adventitious: tip band (~1.4× minRadius); never thicker than half parent
+  const tipStart = species.minRadius * 1.4;
+  return Math.max(
+    species.minRadius,
+    Math.min(tipStart, parentRadius * 0.5),
+  );
 }
 
 /**
@@ -76,7 +180,7 @@ export function collectOccupiedAzimuths(
   for (const childId of node.children) {
     const child = tree.nodes[childId];
     if (!child?.living) continue;
-    if (offAxisAngle(child.orientation) > 0.25) {
+    if (isLateralOrientation(child.orientation)) {
       az.push(azimuthFromOrientation(child.orientation));
     }
   }
@@ -720,15 +824,26 @@ export function createSapling(
   let radius = species.saplingRadius;
   let parent: Internode | null = null;
 
+  // Character trunk: lean is local-to-parent, so a *steady* axis is required —
+  // random yaw each hop cancels and the world axis stays pure +Y (#87).
+  // Target ~18–28° total lean over the scaffold (readable, not a flop).
+  const leanAxis = vec3(rng() - 0.5, 0, rng() - 0.5);
+  const leanAxisLen = Math.hypot(leanAxis[0], leanAxis[2]) || 1;
+  leanAxis[0] /= leanAxisLen;
+  leanAxis[2] /= leanAxisLen;
+  const totalLean = randRange(rng, 0.32, 0.48);
+  const perSeg = totalLean / Math.max(1, species.saplingStemNodes - 1);
   for (let i = 0; i < species.saplingStemNodes; i++) {
-    const lean = quatFromAxisAngle(
+    // Slightly more lean mid-trunk (S-ish), less at the tip
+    const t = i / Math.max(1, species.saplingStemNodes - 1);
+    const envelope = 0.65 + 0.7 * Math.sin(Math.PI * t);
+    const pitch = perSeg * envelope + randNormal(rng, 0, 0.012);
+    const wobble = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.04, 0.03),
+      randNormal(rng, 0, 0.02),
     );
-    const orient =
-      i === 0
-        ? quatFromAxisAngle(vec3(1, 0, 0), randNormal(rng, 0.08, 0.04))
-        : lean;
+    const lean = quatFromAxisAngle(leanAxis, clamp(pitch, 0.008, 0.12));
+    const orient = quatMultiply(lean, wobble);
     const len = baseLen * randRange(rng, 0.85, 1.15);
     radius = Math.max(species.saplingRadius * 0.45, radius * 0.88);
     const node = createInternode(
@@ -756,8 +871,15 @@ export function createSapling(
   }
 
   let laterals = 0;
-  // Place laterals on mid-upper stem for a readable bonsai silhouette
-  const lateralHosts = stemIds.slice(2, Math.max(3, stemIds.length - 1));
+  // Upper stem only — low hosts become long spindly forks after growth (#87)
+  const hostStart = Math.min(
+    stemIds.length - 2,
+    minMainStemLateralDepth(species.saplingStemNodes),
+  );
+  const lateralHosts = stemIds.slice(
+    Math.max(0, hostStart),
+    Math.max(hostStart + 1, stemIds.length - 1),
+  );
   for (
     let i = 0;
     i < lateralHosts.length && laterals < species.saplingLaterals;
@@ -769,7 +891,7 @@ export function createSapling(
       laterals * ((Math.PI * 2) / Math.max(1, species.saplingLaterals)) +
       randNormal(rng, 0, 0.25);
     const angle = Math.max(
-      0.35,
+      species.branchAngle.mean * 0.55,
       randNormal(rng, species.branchAngle.mean, species.branchAngle.std),
     );
     const yaw = quatFromAxisAngle(vec3(0, 1, 0), az);
@@ -778,19 +900,22 @@ export function createSapling(
     const len =
       randRange(rng, species.internodeLength.min, species.internodeLength.max) *
       randRange(rng, 0.95, 1.25);
+    // Same tip-start rule as growth laterals — not a thick fraction of the trunk
+    const latR = spawnShootRadius(host.radius, 'axillary', species);
     // Extra mid segment restores lateral reach at half internode length (#83)
     const lat = createInternode(
       tree,
       host.id,
       orient,
       len,
-      host.radius * 0.58,
+      latR,
       species,
     );
     lat.ageDays = 20 + rng() * 30;
+    // Monopodial pad arm: near-collinear segments after the takeoff kink (#87)
     const midOrient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.12, 0.05),
+      randNormal(rng, 0.03, 0.015),
     );
     const mid = createInternode(
       tree,
@@ -801,10 +926,9 @@ export function createSapling(
       species,
     );
     mid.ageDays = 15 + rng() * 25;
-    // Tip for pad mass
     const tipOrient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.2, 0.08),
+      randNormal(rng, 0.035, 0.015),
     );
     const tip = createInternode(
       tree,
@@ -815,12 +939,11 @@ export function createSapling(
       species,
     );
     tip.ageDays = 10 + rng() * 20;
-    // Occasional distal tip
     if (rng() > 0.4) {
       createInternode(
         tree,
         tip.id,
-        quatFromAxisAngle(vec3(rng() - 0.5, 0, rng() - 0.5), 0.18),
+        quatFromAxisAngle(vec3(rng() - 0.5, 0, rng() - 0.5), 0.04),
         len * 0.5,
         tip.radius * 0.75,
         species,
@@ -920,15 +1043,24 @@ export function extendFromBud(
 ): Internode | null {
   const parent = tree.nodes[nodeId];
   if (!parent?.living || bud.state === 'dead') return null;
-  if (parent.children.length >= species.maxChildren && bud.type !== 'terminal') {
+  // Cap laterals only — tip extension may always continue past maxChildren (#87)
+  if (
+    bud.type !== 'terminal' &&
+    countLateralChildren(tree, parent) >= species.maxChildren
+  ) {
     return null;
   }
 
   let orient = quatIdentity();
   if (bud.type === 'terminal') {
+    // Monopodial flush: terminal meristem continues nearly collinear with the
+    // parent axis. Real juniper/conifer extension is a smooth seasonal shoot,
+    // not a random kink every internode (that read as "jiggy-jaggy") (#87).
+    // Tiny residual lean only — character curve comes from sapling scaffold
+    // and rare environmental/wire set, not from growth noise.
     orient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.05, 0.04),
+      Math.max(0, randNormal(rng, 0.018, 0.012)),
     );
   } else {
     // Re-resolve azimuth against current siblings (children + other buds)
@@ -942,10 +1074,12 @@ export function extendFromBud(
       bud.id,
     );
     bud.azimuth = azimuth;
-    const angle = randNormal(
-      rng,
-      species.branchAngle.mean,
-      species.branchAngle.std,
+    // Single takeoff kink from parent; after this the new shoot extends
+    // collinearly via terminal buds (monopodial). Keep juniper-ish acute–
+    // moderate angle, not a hard random dogleg every generation (#87).
+    const angle = Math.max(
+      species.branchAngle.mean * 0.7,
+      randNormal(rng, species.branchAngle.mean, species.branchAngle.std * 0.7),
     );
     const yaw = quatFromAxisAngle(vec3(0, 1, 0), azimuth);
     const pitch = quatFromAxisAngle(vec3(1, 0, 0), angle);
@@ -957,8 +1091,7 @@ export function extendFromBud(
     species.internodeLength.min,
     species.internodeLength.max,
   );
-  // Species tip floor (was hard 0.0008) — allows fine laterals (#58)
-  const radius = Math.max(species.minRadius, parent.radius * 0.62);
+  const radius = spawnShootRadius(parent.radius, bud.type, species);
   const child = createInternode(
     tree,
     parent.id,

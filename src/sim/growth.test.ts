@@ -1,23 +1,45 @@
 import { describe, expect, it } from 'vitest';
 import { describeNode, MAX_TREE_NODES, tickDay, tickDays } from './growth';
-import { createRng, quatRotateVec3, vec3 } from './math';
+import { createRng } from './math';
 import { getSpecies } from './species/juniper';
 import {
   azimuthFromOrientation,
   azimuthSeparation,
+  branchOrder,
   chooseLateralAzimuth,
   collectOccupiedAzimuths,
+  computeWorldFrames,
+  countLateralChildren,
   countLivingNodes,
   createSapling,
   extendFromBud,
+  isLateralOrientation,
+  maxMainStemNodes,
+  minMainStemLateralDepth,
+  offAxisAngle,
   openSectorAzimuth,
+  spawnShootRadius,
   totalFoliageArea,
+  unbranchedRunLength,
   wrapAzimuth,
 } from './tree';
 import { pruneAt } from './tools/prune';
 import { applyWire, removeWire } from './tools/wire';
 import { environmentAt, vitalityWord } from './time';
 import type { Internode, NodeId } from './types';
+
+function mainStemContinuation(
+  tree: ReturnType<typeof createSapling>,
+  nodeId: NodeId,
+): NodeId | null {
+  const n = tree.nodes[nodeId];
+  if (!n) return null;
+  for (const id of n.children) {
+    const c = tree.nodes[id];
+    if (c?.living && !isLateralOrientation(c.orientation)) return id;
+  }
+  return null;
+}
 
 describe('sapling', () => {
   it('creates a living juniper with foliage', () => {
@@ -208,7 +230,7 @@ describe('min branch diameter (#58)', () => {
     const host = Object.values(tree.nodes).find(
       (n) => n.living && n.id !== tree.rootId && n.children.length === 0,
     )!;
-    host.radius = species.minRadius * 1.1; // would yield parent*0.62 < minRadius
+    host.radius = species.minRadius * 1.1;
     host.buds = [
       {
         id: 'test-ax',
@@ -231,6 +253,45 @@ describe('min branch diameter (#58)', () => {
     expect(child).toBeTruthy();
     expect(child!.radius).toBeGreaterThanOrEqual(species.minRadius - 1e-12);
     // Fine enough that the old visual floor would have inflated it
+    expect(child!.radius).toBeLessThan(OLD_VISUAL_FLOOR);
+  });
+
+  it('new laterals start near tip size even on a thick parent (#87)', () => {
+    // Old rule parent*0.62 made trunk forks several× thicker than tip forks
+    const thick = species.saplingRadius; // ~7 mm trunk-ish
+    const thin = species.minRadius * 2;
+    const fromThick = spawnShootRadius(thick, 'axillary', species);
+    const fromThin = spawnShootRadius(thin, 'axillary', species);
+    expect(fromThick).toBeLessThanOrEqual(species.minRadius * 1.4 + 1e-12);
+    expect(fromThick).toBeLessThan(thick * 0.4);
+    // Same tip band whether parent is trunk or twig
+    expect(Math.abs(fromThick - fromThin)).toBeLessThan(species.minRadius * 0.5);
+
+    const tree = createSapling('juniper-procumbens', 58);
+    const host = tree.nodes[tree.rootId];
+    host.radius = thick;
+    host.buds = [
+      {
+        id: 'ax-fat-parent',
+        type: 'axillary',
+        state: 'flushing',
+        t: 0.5,
+        azimuth: 1.0,
+        ageDays: 5,
+        breakForce: 1,
+      },
+    ];
+    // Detach so maxChildren lateral count is free
+    host.children = [];
+    const child = extendFromBud(
+      tree,
+      host.id,
+      host.buds[0],
+      species,
+      createRng(2),
+    );
+    expect(child).toBeTruthy();
+    expect(child!.radius).toBeLessThanOrEqual(species.minRadius * 1.4 + 1e-9);
     expect(child!.radius).toBeLessThan(OLD_VISUAL_FLOOR);
   });
 
@@ -292,10 +353,11 @@ describe('branch separation (#39)', () => {
 
   it('chooseLateralAzimuth keeps siblings ≥ minSiblingAngle', () => {
     const tree = createSapling('juniper-procumbens', 12345);
-    // Isolate angle logic from soft free-space probes
+    // Isolate angle logic from soft free-space probes; allow multi for this probe
     const pack = {
       ...species,
       freeSpaceProbeRadius: 0,
+      maxChildren: 3,
       phyllotaxis: 'golden' as const,
     };
     // Fresh host with no siblings
@@ -335,45 +397,280 @@ describe('branch separation (#39)', () => {
     expect(occupied.length).toBeGreaterThanOrEqual(3);
   });
 
-  it('after multi-year growth, sibling laterals stay angularly separated', () => {
+  it('forced multi-laterals stay angularly separated (#39)', () => {
+    // Natural growth is maxChildren=1 (#87); construct siblings to check separation.
     const tree = createSapling('juniper-procumbens', 20260326);
-    // ~2 plant-years of daily ticks (capped batches)
+    const pack = {
+      ...species,
+      freeSpaceProbeRadius: 0,
+      maxChildren: 3,
+    };
+    const host = tree.nodes[tree.rootId];
+    host.children = [];
+    host.buds = host.buds.filter((b) => b.type === 'terminal');
+    const rng = createRng(42);
+    const kids = [];
+    for (let i = 0; i < 2; i++) {
+      const az = chooseLateralAzimuth(tree, host.id, pack, rng);
+      host.buds.push({
+        id: `force-ax-${i}`,
+        type: 'axillary',
+        state: 'flushing',
+        t: 0.5,
+        azimuth: az,
+        ageDays: 5,
+        breakForce: 1,
+      });
+      const child = extendFromBud(
+        tree,
+        host.id,
+        host.buds[host.buds.length - 1],
+        pack,
+        rng,
+      );
+      expect(child).toBeTruthy();
+      kids.push(child!);
+    }
+    expect(kids.length).toBe(2);
+    const sep = azimuthSeparation(
+      azimuthFromOrientation(kids[0].orientation),
+      azimuthFromOrientation(kids[1].orientation),
+    );
+    expect(sep).toBeGreaterThanOrEqual(pack.minSiblingAngle * 0.85);
+  });
+});
+
+describe('branching form (#87)', () => {
+  const species = getSpecies('juniper-procumbens');
+
+  it('documents wider takeoff, single-lateral hosts, freer forks', () => {
+    // ~45–55° takeoff; continuations are near-collinear (monopodial)
+    expect(species.branchAngle.mean).toBeGreaterThanOrEqual(0.75);
+    expect(species.branchAngle.mean).toBeLessThanOrEqual(1.05);
+    expect(species.maxChildren).toBe(1);
+    expect(species.lateralBudChance).toBeGreaterThanOrEqual(0.01);
+    expect(species.apicalDominance).toBeLessThanOrEqual(0.72);
+    expect(species.budBreakThreshold).toBeLessThanOrEqual(0.5);
+  });
+
+  it('terminal extension stays nearly collinear (monopodial flush, not zigzag)', () => {
+    const tree = createSapling('juniper-procumbens', 11);
+    const tip = Object.values(tree.nodes).find(
+      (n) => n.living && n.children.length === 0,
+    )!;
+    tip.buds = [
+      {
+        id: 'term-straight',
+        type: 'terminal',
+        state: 'flushing',
+        t: 1,
+        azimuth: 0,
+        ageDays: 5,
+        breakForce: 1,
+      },
+    ];
+    const rng = createRng(3);
+    const child = extendFromBud(tree, tip.id, tip.buds[0], species, rng);
+    expect(child).toBeTruthy();
+    // Local pitch from parent +Y should be tiny (~1° class), not ~8° kinks
+    expect(offAxisAngle(child!.orientation)).toBeLessThan(0.08);
+  });
+
+  it('places sapling laterals above the low trunk broom zone', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    const minDepth = minMainStemLateralDepth(species.saplingStemNodes);
+    let lowMain = 0;
+    let upperMain = 0;
+    for (const parent of Object.values(tree.nodes)) {
+      if (!parent.living) continue;
+      if (branchOrder(tree, parent.id) !== 0) continue;
+      const lats = parent.children
+        .map((id) => tree.nodes[id])
+        .filter((c) => c?.living && isLateralOrientation(c.orientation));
+      if (lats.length === 0) continue;
+      const d = (() => {
+        let n = 0;
+        let cur = parent;
+        while (cur.parentId) {
+          n += 1;
+          cur = tree.nodes[cur.parentId]!;
+        }
+        return n;
+      })();
+      if (d < minDepth) lowMain += lats.length;
+      else upperMain += lats.length;
+    }
+    expect(lowMain).toBe(0);
+    expect(upperMain).toBeGreaterThanOrEqual(species.saplingLaterals);
+  });
+
+  it('sapling main stem has character lean, not a pure vertical pole', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    const frames = computeWorldFrames(tree);
+    // Walk near-axis main stem
+    const stem: NodeId[] = [];
+    let cur: NodeId | null = tree.rootId;
+    while (cur && stem.length < 40) {
+      stem.push(cur);
+      cur = mainStemContinuation(tree, cur);
+    }
+    expect(stem.length).toBe(species.saplingStemNodes);
+    const tip = frames.get(stem[stem.length - 1])!;
+    const tipHoriz = Math.hypot(tip.tip[0], tip.tip[2]);
+    const tipY = Math.max(1e-6, tip.tip[1]);
+    // Tip should sit clearly off the vertical axis (was ~0 on pure +Y poles)
+    expect(tipHoriz / tipY).toBeGreaterThan(0.12);
+    // Upper stem should not read as pure +Y
+    expect(tip.dir[1]).toBeLessThan(0.97);
+  });
+
+  it('main stem does not tower with extra vertical internodes under Years FF', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    const cap = maxMainStemNodes(species.saplingStemNodes);
+    for (let i = 0; i < 12; i++) tickDays(tree, 60, 60);
+
+    let stemNodes = 0;
+    let cur: NodeId | null = tree.rootId;
+    while (cur && stemNodes < 80) {
+      stemNodes += 1;
+      cur = mainStemContinuation(tree, cur);
+    }
+    expect(stemNodes).toBeLessThanOrEqual(cap);
+    expect(stemNodes).toBeGreaterThanOrEqual(species.saplingStemNodes);
+  });
+
+  it('extendFromBud rejects a second lateral on the same host', () => {
+    const tree = createSapling('juniper-procumbens', 87);
+    const host = Object.values(tree.nodes).find(
+      (n) => n.living && n.id !== tree.rootId && n.children.length === 0,
+    )!;
+    const rng = createRng(3);
+    const budA = {
+      id: 'ax-a',
+      type: 'axillary' as const,
+      state: 'flushing' as const,
+      t: 0.5,
+      azimuth: 0.4,
+      ageDays: 5,
+      breakForce: 1,
+    };
+    const budB = {
+      id: 'ax-b',
+      type: 'axillary' as const,
+      state: 'flushing' as const,
+      t: 0.6,
+      azimuth: 2.5,
+      ageDays: 5,
+      breakForce: 1,
+    };
+    host.buds = [budA, budB];
+    const first = extendFromBud(tree, host.id, budA, species, rng);
+    expect(first).toBeTruthy();
+    expect(countLateralChildren(tree, host)).toBe(1);
+    const second = extendFromBud(tree, host.id, budB, species, rng);
+    expect(second).toBeNull();
+    expect(countLateralChildren(tree, host)).toBe(1);
+  });
+
+  it('extendFromBud still allows terminal extension after a lateral', () => {
+    const tree = createSapling('juniper-procumbens', 88);
+    const host = Object.values(tree.nodes).find(
+      (n) => n.living && n.id !== tree.rootId && n.children.length === 0,
+    )!;
+    const rng = createRng(5);
+    host.buds = [
+      {
+        id: 'ax-1',
+        type: 'axillary',
+        state: 'flushing',
+        t: 0.5,
+        azimuth: 1.1,
+        ageDays: 5,
+        breakForce: 1,
+      },
+      {
+        id: 'term-1',
+        type: 'terminal',
+        state: 'flushing',
+        t: 1,
+        azimuth: 0,
+        ageDays: 5,
+        breakForce: 1,
+      },
+    ];
+    expect(
+      extendFromBud(tree, host.id, host.buds[0], species, rng),
+    ).toBeTruthy();
+    const tip = extendFromBud(tree, host.id, host.buds[1], species, rng);
+    expect(tip).toBeTruthy();
+    expect(isLateralOrientation(tip!.orientation)).toBe(false);
+    expect(countLateralChildren(tree, host)).toBe(1);
+    expect(host.children.length).toBe(2);
+  });
+
+  it('after multi-year growth, laterals are wide and rarely stacked', () => {
+    const tree = createSapling('juniper-procumbens', 20260731);
     for (let i = 0; i < 12; i++) {
       tickDays(tree, 60, 60);
     }
 
-    let pairsChecked = 0;
-    let minObserved = Math.PI;
-    const threshold = species.minSiblingAngle * 0.85; // small tolerance for best-effort crowding
+    let multiHosts = 0;
+    let singleHosts = 0;
+    let takeoffSum = 0;
+    let takeoffN = 0;
+    let lateralHosts = 0;
+    let lowMainLaterals = 0;
+    let longSecondaryRuns = 0;
+    let secondaryTips = 0;
+    const minDepth = minMainStemLateralDepth(species.saplingStemNodes);
 
     for (const parent of Object.values(tree.nodes)) {
       if (!parent.living) continue;
-      // Lateral children: clearly off parent axis
       const laterals = parent.children
         .map((id) => tree.nodes[id])
-        .filter((c) => {
-          if (!c?.living) return false;
-          const dir = quatRotateVec3(c.orientation, vec3(0, 1, 0));
-          const off = Math.acos(Math.min(1, Math.max(-1, dir[1])));
-          return off > 0.3;
-        });
-      if (laterals.length < 2) continue;
-
-      for (let i = 0; i < laterals.length; i++) {
-        for (let j = i + 1; j < laterals.length; j++) {
-          const a = azimuthFromOrientation(laterals[i].orientation);
-          const b = azimuthFromOrientation(laterals[j].orientation);
-          const sep = azimuthSeparation(a, b);
-          minObserved = Math.min(minObserved, sep);
-          pairsChecked += 1;
-          expect(sep).toBeGreaterThanOrEqual(threshold);
+        .filter((c) => c?.living && isLateralOrientation(c.orientation));
+      if (laterals.length >= 2) multiHosts += 1;
+      else if (laterals.length === 1) singleHosts += 1;
+      if (laterals.length > 0) lateralHosts += 1;
+      for (const lat of laterals) {
+        takeoffSum += offAxisAngle(lat.orientation);
+        takeoffN += 1;
+        if (branchOrder(tree, parent.id) === 0) {
+          let d = 0;
+          let cur: typeof parent | undefined = parent;
+          while (cur?.parentId) {
+            d += 1;
+            cur = tree.nodes[cur.parentId];
+          }
+          if (d < minDepth) lowMainLaterals += 1;
         }
       }
     }
 
-    // Fixed seed should produce multi-lateral parents under multi-year growth
-    expect(pairsChecked).toBeGreaterThan(0);
-    expect(minObserved).toBeGreaterThanOrEqual(threshold);
+    for (const n of Object.values(tree.nodes)) {
+      if (!n.living || n.children.length > 0) continue;
+      if (branchOrder(tree, n.id) < 1) continue;
+      secondaryTips += 1;
+      if (unbranchedRunLength(tree, n.id) >= 7) longSecondaryRuns += 1;
+    }
+
+    // Prefer many single-lateral hosts along axes (not a few multi-fork stars)
+    expect(lateralHosts).toBeGreaterThan(12);
+    expect(singleHosts).toBeGreaterThan(multiHosts);
+    // Natural growth should almost never double-up on one internode
+    expect(multiHosts).toBeLessThanOrEqual(
+      Math.max(1, Math.floor(singleHosts * 0.15)),
+    );
+    expect(takeoffN).toBeGreaterThan(12);
+    // Mean takeoff well above the old ~0.62 acute band
+    expect(takeoffSum / takeoffN).toBeGreaterThan(0.7);
+    // Few (ideally zero) new forks from low trunk broom zone
+    expect(lowMainLaterals).toBeLessThanOrEqual(2);
+    // Secondary tips ramify eventually; monopodial flushes may run longer now
+    expect(secondaryTips).toBeGreaterThan(5);
+    expect(longSecondaryRuns).toBeLessThanOrEqual(
+      Math.max(4, Math.floor(secondaryTips * 0.35)),
+    );
   });
 });
 
