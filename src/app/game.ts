@@ -18,6 +18,7 @@ import {
   wireSetLabel,
 } from '../sim/tools/wire';
 import { downloadTree, parseTree, serializeTree } from '../sim/serialize';
+import { StructuralHistory } from '../sim/history';
 import type { NodeId, TreeState, Vec3 } from '../sim/types';
 import { BonsaiScene } from '../render/scene';
 import {
@@ -146,6 +147,11 @@ export class Game {
   private lastPracticeLabel = '';
   /** Throttle HUD refresh under year/month acceleration. */
   private hudCooldownTimer = 0;
+  /**
+   * Structural undo stack (prune / pinch / wire / unwire / bend).
+   * Pure time passage is never snapshotted (issue #67).
+   */
+  private structuralHistory = new StructuralHistory();
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -405,6 +411,7 @@ export class Game {
     }
 
     if (tool === 'prune') {
+      this.pushStructural('Undid last cut');
       const r = pruneAt(this.tree, nodeId);
       this.setStatus(r.message);
       if (r.ok) {
@@ -413,39 +420,52 @@ export class Game {
         this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('prune');
+      } else {
+        this.structuralHistory.discardLast();
       }
       this.refreshHud();
       return r;
     }
 
     if (tool === 'pinch') {
+      this.pushStructural('Undid last pinch');
       const r = pinchAt(this.tree, nodeId);
       this.setStatus(r.message);
       if (r.ok) {
         this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('pinch');
+      } else {
+        this.structuralHistory.discardLast();
       }
       this.refreshHud();
       return r;
     }
 
     if (tool === 'wire') {
+      this.pushStructural('Undid last wire');
       const r = applyWire(this.tree, nodeId);
       this.setStatus(r.message);
-      this.markPhysicsDirty(false);
-      this.scene.markDirty();
+      if (r.ok) {
+        this.markPhysicsDirty(false);
+        this.scene.markDirty();
+      } else {
+        this.structuralHistory.discardLast();
+      }
       this.refreshHud();
       return r;
     }
 
     // unwire
+    this.pushStructural('Undid last unwire');
     const r = removeWire(this.tree, nodeId);
     this.setStatus(r.message);
     if (r.ok) {
       this.markPhysicsDirty(false);
       resetJointElastic(this.physics, nodeId);
       this.scene.markDirty();
+    } else {
+      this.structuralHistory.discardLast();
     }
     this.refreshHud();
     return r;
@@ -456,6 +476,7 @@ export class Game {
     if (!this.tree.nodes[nodeId]) {
       return { ok: false, message: 'No such branch' };
     }
+    this.pushStructural('Undid last shape');
     bendWiredNode(this.tree, nodeId, dir);
     resetJointElastic(this.physics, nodeId);
     this.markPhysicsDirty(false);
@@ -464,10 +485,51 @@ export class Game {
     return { ok: true, message: 'Bent' };
   }
 
+  /**
+   * Restore the last structural snapshot (prune / pinch / wire / unwire / bend).
+   * Empty stack → quiet status only.
+   */
+  undoLast(): boolean {
+    const snap = this.structuralHistory.pop();
+    if (!snap) {
+      this.setStatus('Nothing to undo');
+      return false;
+    }
+    this.tree = snap.tree;
+    const sel =
+      snap.selected && this.tree.nodes[snap.selected] ? snap.selected : null;
+    this.selected = sel;
+    this.scene.setSelected(sel);
+    this.markPhysicsDirty(true);
+    this.syncPhysics();
+    this.scene.markDirty();
+    this.scene.syncTree(
+      this.tree,
+      computeLiveWorldFrames(this.tree, this.physics),
+    );
+    // Force practice HUD to recompute against restored canopy
+    this.lastPracticeLabel = '';
+    this.practiceHudTimer = 1.2;
+    this.setStatus(snap.undoLabel);
+    this.refreshHud();
+    return true;
+  }
+
+  /** Whether at least one structural edit can be undone. */
+  canUndo(): boolean {
+    return this.structuralHistory.canUndo();
+  }
+
+  /** Snapshot tree + selection before a structural mutation. */
+  private pushStructural(undoLabel: string): void {
+    this.structuralHistory.push(this.tree, this.selected, undoLabel);
+  }
+
   /** Reset to a fresh sapling (no confirm dialog — used by screenshot harness). */
   newSapling(): void {
     this.tree = createSapling();
     this.selected = null;
+    this.structuralHistory.clear();
     clearLocal();
     history.replaceState(null, '', window.location.pathname + window.location.search);
     this.scene.setSelected(null);
@@ -558,6 +620,11 @@ export class Game {
       }
     });
 
+    document.getElementById('btn-undo')?.addEventListener('click', () => {
+      closeFiles();
+      this.undoLast();
+    });
+
     document.getElementById('btn-frame')?.addEventListener('click', () => {
       closeFiles();
       this.frameCamera();
@@ -588,6 +655,7 @@ export class Game {
         const text = await file.text();
         this.tree = parseTree(text);
         this.selected = null;
+        this.structuralHistory.clear();
         this.scene.setSelected(null);
         this.markPhysicsDirty(true);
         this.syncPhysics();
@@ -633,6 +701,12 @@ export class Game {
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
       const key = e.key.toLowerCase();
+      // Z / Cmd+Z / Ctrl+Z — structural undo (issue #67)
+      if (key === 'z' && !e.altKey && !e.shiftKey) {
+        e.preventDefault();
+        this.undoLast();
+        return;
+      }
       if (key === 'i') this.setTool('inspect');
       if (key === 'p') this.setTool('prune');
       if (key === 'n') this.setTool('pinch');
@@ -704,6 +778,8 @@ export class Game {
         this.wiring = true;
         this.selected = this.wireTarget;
         this.scene.setSelected(this.wireTarget);
+        // One snapshot for the whole shape gesture (wire install + bends)
+        this.pushStructural('Undid last shape');
         const node = this.tree.nodes[this.wireTarget];
         if (node && !node.wire) {
           const r = applyWire(this.tree, this.wireTarget);
@@ -798,6 +874,7 @@ export class Game {
         this.refreshHud();
         return;
       }
+      this.pushStructural('Undid last wire');
       const r = applyWire(this.tree, id);
       this.setStatus(
         this.hasBentOnce
@@ -808,6 +885,8 @@ export class Game {
         void import('../render/audio').then((a) => a.playToolSound('wire'));
         this.markPhysicsDirty(false);
         this.scene.markDirty();
+      } else {
+        this.structuralHistory.discardLast();
       }
       this.refreshHud();
       return;
