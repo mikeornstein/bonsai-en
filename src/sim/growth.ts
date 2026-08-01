@@ -149,24 +149,20 @@ function updateDominanceAndBuds(
       seasonMul > 0.6 &&
       node.ageDays < 140
     ) {
-      // Long collinear runs get a strong fork push; short runs use base chance
+      // Real juniper: flushes extend monopodially first; laterals form at
+      // nodes along the shoot — not forced doglegs every few internodes (#87).
+      // Mild boost only after a long unbranched run; no "force fork" kinks.
       let chance = species.lateralBudChance * seasonMul;
-      if (run >= 3) chance *= 2.4;
-      if (run >= 5) chance *= 1.6;
-      // Secondary shoots ramify more eagerly than the trunk
-      if (order >= 1) chance *= 1.35;
-      // Forced fork when a stick is already too long
-      const forceFork = run >= 4 && order >= 1 && rng() < 0.12 * seasonMul;
-      if (forceFork || rng() < chance) {
+      if (run >= 5) chance *= 1.5;
+      if (run >= 8) chance *= 1.35;
+      // Secondary shoots can ramify a bit more eagerly than the trunk
+      if (order >= 1) chance *= 1.15;
+      if (rng() < chance) {
         // Phyllotaxis + min sibling angle + optional free-space probe (#39)
         const azimuth = chooseLateralAzimuth(tree, node.id, species, rng);
         const bud = addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, azimuth);
         // Head-start so the bud can flush in the same season it forms (#87)
-        if (bud) {
-          bud.breakForce = forceFork
-            ? species.budBreakThreshold + 0.12
-            : 0.22 + rng() * 0.18;
-        }
+        if (bud) bud.breakForce = 0.22 + rng() * 0.18;
       }
     }
 
@@ -484,11 +480,13 @@ export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
     ) {
       return false;
     }
-    // Cap spindly tip runs / leader towers so primary spend goes to pads (#87).
+    // Allow longer monopodial flushes (real juniper extends a shoot before
+    // ramifying). Still cap runaway leader towers and absurd sticks (#87).
     if (bud.type === 'terminal') {
       const run = unbranchedRunLength(tree, node.id);
       const order = branchOrder(tree, node.id);
-      if (run >= 5 && order >= 1) return false;
+      // Secondary shoots: stop after a full-season-ish flush, not every 5 segs
+      if (run >= 9 && order >= 1) return false;
       // Soft main-stem height budget: only +2 internodes past sapling scaffold
       if (order === 0 && run >= maxMainStemNodes(species.saplingStemNodes)) {
         return false;

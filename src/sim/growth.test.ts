@@ -431,13 +431,36 @@ describe('branching form (#87)', () => {
   const species = getSpecies('juniper-procumbens');
 
   it('documents wider takeoff, single-lateral hosts, freer forks', () => {
-    // ~53° mean (was ~35°); still juniper-ish, not hard 90° T-junctions
-    expect(species.branchAngle.mean).toBeGreaterThanOrEqual(0.85);
-    expect(species.branchAngle.mean).toBeLessThanOrEqual(1.15);
+    // ~45–55° takeoff; continuations are near-collinear (monopodial)
+    expect(species.branchAngle.mean).toBeGreaterThanOrEqual(0.75);
+    expect(species.branchAngle.mean).toBeLessThanOrEqual(1.05);
     expect(species.maxChildren).toBe(1);
-    expect(species.lateralBudChance).toBeGreaterThanOrEqual(0.02);
+    expect(species.lateralBudChance).toBeGreaterThanOrEqual(0.01);
     expect(species.apicalDominance).toBeLessThanOrEqual(0.72);
     expect(species.budBreakThreshold).toBeLessThanOrEqual(0.5);
+  });
+
+  it('terminal extension stays nearly collinear (monopodial flush, not zigzag)', () => {
+    const tree = createSapling('juniper-procumbens', 11);
+    const tip = Object.values(tree.nodes).find(
+      (n) => n.living && n.children.length === 0,
+    )!;
+    tip.buds = [
+      {
+        id: 'term-straight',
+        type: 'terminal',
+        state: 'flushing',
+        t: 1,
+        azimuth: 0,
+        ageDays: 5,
+        breakForce: 1,
+      },
+    ];
+    const rng = createRng(3);
+    const child = extendFromBud(tree, tip.id, tip.buds[0], species, rng);
+    expect(child).toBeTruthy();
+    // Local pitch from parent +Y should be tiny (~1° class), not ~8° kinks
+    expect(offAxisAngle(child!.orientation)).toBeLessThan(0.08);
   });
 
   it('places sapling laterals above the low trunk broom zone', () => {
@@ -638,10 +661,10 @@ describe('branching form (#87)', () => {
     expect(takeoffSum / takeoffN).toBeGreaterThan(0.7);
     // Few (ideally zero) new forks from low trunk broom zone
     expect(lowMainLaterals).toBeLessThanOrEqual(2);
-    // Secondary tips should not run as long collinear sticks
+    // Secondary tips ramify eventually; monopodial flushes may run longer now
     expect(secondaryTips).toBeGreaterThan(5);
     expect(longSecondaryRuns).toBeLessThanOrEqual(
-      Math.max(2, Math.floor(secondaryTips * 0.15)),
+      Math.max(4, Math.floor(secondaryTips * 0.35)),
     );
   });
 });

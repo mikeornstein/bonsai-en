@@ -819,9 +819,10 @@ export function createSapling(
       species,
     );
     lat.ageDays = 20 + rng() * 30;
+    // Monopodial pad arm: near-collinear segments after the takeoff kink (#87)
     const midOrient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.12, 0.05),
+      randNormal(rng, 0.03, 0.015),
     );
     const mid = createInternode(
       tree,
@@ -832,10 +833,9 @@ export function createSapling(
       species,
     );
     mid.ageDays = 15 + rng() * 25;
-    // Tip for pad mass
     const tipOrient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.2, 0.08),
+      randNormal(rng, 0.035, 0.015),
     );
     const tip = createInternode(
       tree,
@@ -846,12 +846,11 @@ export function createSapling(
       species,
     );
     tip.ageDays = 10 + rng() * 20;
-    // Occasional distal tip
     if (rng() > 0.4) {
       createInternode(
         tree,
         tip.id,
-        quatFromAxisAngle(vec3(rng() - 0.5, 0, rng() - 0.5), 0.18),
+        quatFromAxisAngle(vec3(rng() - 0.5, 0, rng() - 0.5), 0.04),
         len * 0.5,
         tip.radius * 0.75,
         species,
@@ -961,13 +960,14 @@ export function extendFromBud(
 
   let orient = quatIdentity();
   if (bud.type === 'terminal') {
-    // Main-stem tips get a real lean so leader flushes aren't pure +Y towers (#87)
-    const order = branchOrder(tree, parent.id);
-    const meanLean = order === 0 ? 0.14 : 0.06;
-    const stdLean = order === 0 ? 0.05 : 0.035;
+    // Monopodial flush: terminal meristem continues nearly collinear with the
+    // parent axis. Real juniper/conifer extension is a smooth seasonal shoot,
+    // not a random kink every internode (that read as "jiggy-jaggy") (#87).
+    // Tiny residual lean only — character curve comes from sapling scaffold
+    // and rare environmental/wire set, not from growth noise.
     orient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      Math.max(0.04, randNormal(rng, meanLean, stdLean)),
+      Math.max(0, randNormal(rng, 0.018, 0.012)),
     );
   } else {
     // Re-resolve azimuth against current siblings (children + other buds)
@@ -981,10 +981,12 @@ export function extendFromBud(
       bud.id,
     );
     bud.azimuth = azimuth;
-    // Floor so std never collapses a lateral into a near-collinear stick (#87)
+    // Single takeoff kink from parent; after this the new shoot extends
+    // collinearly via terminal buds (monopodial). Keep juniper-ish acute–
+    // moderate angle, not a hard random dogleg every generation (#87).
     const angle = Math.max(
-      species.branchAngle.mean * 0.55,
-      randNormal(rng, species.branchAngle.mean, species.branchAngle.std),
+      species.branchAngle.mean * 0.7,
+      randNormal(rng, species.branchAngle.mean, species.branchAngle.std * 0.7),
     );
     const yaw = quatFromAxisAngle(vec3(0, 1, 0), azimuth);
     const pitch = quatFromAxisAngle(vec3(1, 0, 0), angle);

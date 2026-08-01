@@ -17,13 +17,15 @@ export const juniper: SpeciesDefinition = {
   minRadius: 0.00045,
   maxRadius: 0.05,
 
-  // Wider takeoff (~53°) so laterals open off the parent axis (#87; was ~35°)
-  branchAngle: { mean: 0.92, std: 0.18 },
+  // Lateral takeoff from parent (~48°). Continuations stay collinear (#87).
+  // Real juniper laterals are often sub-horizontal under apical control, not
+  // random doglegs — angle is applied once at fork, not every internode.
+  branchAngle: { mean: 0.85, std: 0.12 },
   /**
-   * Base chance for new axillaries; long unbranched runs and secondary shoots
-   * get multipliers in growth.ts. Paired with maxChildren=1 (#87).
+   * Base chance for new axillaries during flush. Real junipers flush monopodial
+   * shoots first, then bud along the axis — keep this modest (#87).
    */
-  lateralBudChance: 0.024,
+  lateralBudChance: 0.016,
   /** One living lateral per internode — no multi-lateral clumps (#87). */
   maxChildren: 1,
   // Sibling lateral separation — avoids parallel “railroad” forks (#39)
