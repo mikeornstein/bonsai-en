@@ -116,7 +116,7 @@
                 type="button"
                 id="btn-share"
                 role="menuitem"
-                title="Copy a share link when the tree fits in a URL; falls back to a file for very large trees"
+                title="Share a link, Messages sheet, or draft a post to X with a portrait"
               >
                 Share
               </button>
@@ -167,6 +167,69 @@
             hidden
           />
         </section>
+
+        <div
+          id="share-backdrop"
+          class="share-backdrop"
+          hidden
+          role="presentation"
+        >
+          <div
+            id="share-panel"
+            class="share-panel"
+            role="dialog"
+            aria-modal="true"
+            aria-labelledby="share-title"
+          >
+            <header class="share-header">
+              <h2 id="share-title" class="share-title">Share</h2>
+              <button
+                type="button"
+                id="share-close"
+                class="share-close"
+                aria-label="Close share"
+                title="Close"
+              >
+                ×
+              </button>
+            </header>
+            <p id="share-hint" class="share-hint">
+              Copy a clean link for Messages, open the system share sheet, or
+              draft a post to X with a tree portrait.
+            </p>
+            <p id="share-url" class="share-url" hidden></p>
+            <div class="share-actions">
+              <button
+                type="button"
+                id="share-copy"
+                title="Copy an absolute link you can paste into Messages"
+              >
+                Copy link
+              </button>
+              <button
+                type="button"
+                id="share-system"
+                title="Open the device share sheet (Messages on iPhone)"
+              >
+                Messages / Share…
+              </button>
+              <button
+                type="button"
+                id="share-x"
+                title="Open X with a draft post; portrait image is saved for you to attach"
+              >
+                Post to X
+              </button>
+              <button
+                type="button"
+                id="share-image"
+                title="Download a PNG portrait of the tree"
+              >
+                Save image
+              </button>
+            </div>
+          </div>
+        </div>
 
         <p class="hint" id="hint">
           Match the ink · prune outside · wire the trunk · grow into the pad

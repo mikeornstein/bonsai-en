@@ -366,7 +366,7 @@ Script: `BONSAI_URL=http://localhost:5173/ node scripts/physics-stability.mjs` �
 
 - **Do not** import Three.js from `src/sim/`.  
 - Tree state is JSON-serializable (`schemaVersion: 1`).  
-- Share links: LZ-string in URL hash (`src/share/encode.ts`); large trees fall back to file export.  
+- Share links: LZ-string in URL hash (`src/share/encode.ts`); Share panel (⋯ → Share) offers **Copy link**, **Messages / system share**, **Post to X** (intent + portrait PNG), and **Save image**. Clipboard failure is never reported as “tree too large.” Oversized trees disable link actions and still allow image/export.  
 
 ## Full detail
 

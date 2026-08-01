@@ -64,15 +64,91 @@ export function estimateShareUrlLength(
   return originPath.length + treeToShareHash(tree).length;
 }
 
-export function copyShareLink(tree: TreeState): Promise<boolean> {
-  const url = `${window.location.origin}${window.location.pathname}${treeToShareHash(tree)}`;
+/** Origin + pathname for share URLs (no hash). */
+export function shareOriginPath(
+  loc: Pick<Location, 'origin' | 'pathname'> = window.location,
+): string {
+  return `${loc.origin}${loc.pathname}`;
+}
+
+export type BuildShareUrlResult =
+  | { ok: true; url: string }
+  | { ok: false; reason: 'too_large'; length: number };
+
+/**
+ * Build an absolute share URL, or report that the tree exceeds the URL budget.
+ * Pure given `originPath` (defaults to current location).
+ */
+export function buildShareUrl(
+  tree: TreeState,
+  originPath?: string,
+): BuildShareUrlResult {
+  const base =
+    originPath ??
+    (typeof window !== 'undefined'
+      ? shareOriginPath()
+      : 'https://example.com/bonsai-en/');
+  const url = `${base}${treeToShareHash(tree)}`;
   if (url.length > MAX_SHARE_URL_LENGTH) {
-    return Promise.resolve(false);
+    return { ok: false, reason: 'too_large', length: url.length };
   }
-  return navigator.clipboard.writeText(url).then(
-    () => true,
-    () => false,
-  );
+  return { ok: true, url };
+}
+
+export type CopyShareResult =
+  | { status: 'copied'; url: string }
+  | { status: 'too_large'; length: number }
+  | { status: 'clipboard_denied'; url: string };
+
+/** Copy plain text with Clipboard API, falling back to a hidden textarea. */
+export async function copyTextToClipboard(text: string): Promise<boolean> {
+  if (typeof navigator !== 'undefined' && navigator.clipboard?.writeText) {
+    try {
+      await navigator.clipboard.writeText(text);
+      return true;
+    } catch {
+      // fall through
+    }
+  }
+  return copyTextViaExecCommand(text);
+}
+
+function copyTextViaExecCommand(text: string): boolean {
+  if (typeof document === 'undefined') return false;
+  try {
+    const ta = document.createElement('textarea');
+    ta.value = text;
+    ta.setAttribute('readonly', '');
+    ta.style.position = 'fixed';
+    ta.style.left = '-9999px';
+    ta.style.top = '0';
+    ta.style.opacity = '0';
+    document.body.appendChild(ta);
+    ta.focus();
+    ta.select();
+    ta.setSelectionRange(0, text.length);
+    const ok = document.execCommand('copy');
+    document.body.removeChild(ta);
+    return ok;
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * Build + copy a share link. Distinguishes size limit from clipboard denial
+ * so the UI never misreports a permission failure as “tree too large.”
+ */
+export async function copyShareLink(tree: TreeState): Promise<CopyShareResult> {
+  const built = buildShareUrl(tree);
+  if (!built.ok) {
+    return { status: 'too_large', length: built.length };
+  }
+  const copied = await copyTextToClipboard(built.url);
+  if (copied) {
+    return { status: 'copied', url: built.url };
+  }
+  return { status: 'clipboard_denied', url: built.url };
 }
 
 const STORAGE_KEY = 'bonsai-en-autosave';
