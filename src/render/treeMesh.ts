@@ -928,8 +928,9 @@ export class TreeRenderer {
     if (isTip) {
       // One primary tip pad + optional small secondary for silhouette gaps
       padCenters.push({ t: 0.72, side: 0.15, elev: 0.12 });
-      if (len > 0.012) padCenters.push({ t: 0.42, side: 0.55, elev: -0.1 });
-      if (len > 0.022) padCenters.push({ t: 0.55, side: -0.65, elev: 0.05 });
+      // Thresholds track ~half internode scale (#83)
+      if (len > 0.006) padCenters.push({ t: 0.42, side: 0.55, elev: -0.1 });
+      if (len > 0.011) padCenters.push({ t: 0.55, side: -0.65, elev: 0.05 });
     } else {
       // Sparse mid-shoot pads only where living foliage clusters exist
       const living = node.foliage.filter((f) => f.living);

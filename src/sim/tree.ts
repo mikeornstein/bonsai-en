@@ -686,6 +686,7 @@ export function createSapling(
     const len =
       randRange(rng, species.internodeLength.min, species.internodeLength.max) *
       randRange(rng, 0.95, 1.25);
+    // Extra mid segment restores lateral reach at half internode length (#83)
     const lat = createInternode(
       tree,
       host.id,
@@ -695,21 +696,34 @@ export function createSapling(
       species,
     );
     lat.ageDays = 20 + rng() * 30;
-    // Always a second-order tip for pad mass
+    const midOrient = quatFromAxisAngle(
+      vec3(rng() - 0.5, 0, rng() - 0.5),
+      randNormal(rng, 0.12, 0.05),
+    );
+    const mid = createInternode(
+      tree,
+      lat.id,
+      midOrient,
+      len * randRange(rng, 0.8, 1.0),
+      lat.radius * 0.82,
+      species,
+    );
+    mid.ageDays = 15 + rng() * 25;
+    // Tip for pad mass
     const tipOrient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
       randNormal(rng, 0.2, 0.08),
     );
     const tip = createInternode(
       tree,
-      lat.id,
+      mid.id,
       tipOrient,
       len * randRange(rng, 0.65, 0.9),
-      lat.radius * 0.72,
+      mid.radius * 0.72,
       species,
     );
     tip.ageDays = 10 + rng() * 20;
-    // Occasional third-order tip
+    // Occasional distal tip
     if (rng() > 0.4) {
       createInternode(
         tree,
@@ -732,8 +746,9 @@ export function createSapling(
     }
   }
 
-  // Clear foliage from lower stem so the trunk line is readable
-  for (let i = 0; i < Math.min(3, stemIds.length); i++) {
+  // Clear foliage from lower ~40% of stem so the trunk line is readable
+  const clearStem = Math.max(3, Math.floor(stemIds.length * 0.4));
+  for (let i = 0; i < Math.min(clearStem, stemIds.length); i++) {
     const n = tree.nodes[stemIds[i]];
     if (n) n.foliage = [];
   }

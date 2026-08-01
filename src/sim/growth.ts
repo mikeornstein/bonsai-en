@@ -15,6 +15,12 @@ import {
 import { wireSetLabel } from './tools/wire';
 import type { GrowthStats, Internode, TreeState } from './types';
 
+/**
+ * Max internodes before primary flush stops adding nodes.
+ * Raised with 2× axial resolution (#83); was 280.
+ */
+export const MAX_TREE_NODES = 560;
+
 /** Optional per-tick growth knobs (UI speed → plant-time playability). */
 export interface TickOpts {
   /**
@@ -184,7 +190,7 @@ function updateFoliage(
 }
 
 /**
- * Replace missing pads on thin living shoots. Without this, hitting the ~280
+ * Replace missing pads on thin living shoots. Without this, hitting the
  * node cap freezes topology and old pads die with nothing to replace them.
  */
 function renewEvergreenFoliage(
@@ -433,7 +439,7 @@ export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
       const cost = estLen * species.primaryCostPerMeter * 0.45;
       if (cost > primaryBudget) continue;
       // Cap complexity for real-time mesh + mobile
-      if (Object.keys(tree.nodes).length > 280) continue;
+      if (Object.keys(tree.nodes).length >= MAX_TREE_NODES) continue;
       // Limit simultaneous flushes under acceleration
       if (stats.newNodes >= 3) continue;
 

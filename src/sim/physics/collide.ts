@@ -89,7 +89,7 @@ export function detectContacts(
     return n && n.living && n.parentId !== null && n.length > 1e-6;
   });
 
-  // Self-collision (broadphase: all pairs — n≤280)
+  // Self-collision (broadphase: all pairs — n≤MAX_TREE_NODES)
   for (let i = 0; i < ids.length; i++) {
     const aId = ids[i];
     const fa = frames.get(aId);
