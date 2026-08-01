@@ -5,6 +5,7 @@ import { pruneAt } from '../tools/prune';
 import { scorePracticeMatch } from './score';
 import { PRACTICE_STEM } from './target';
 import {
+  primaryOverflowReason,
   primaryStemNodeIds,
   rankOverflowPruneTargets,
   stemBendDirections,
@@ -63,6 +64,36 @@ describe('shokunin practice helpers', () => {
     expect(Math.hypot(dir[0], dir[1], dir[2])).toBeGreaterThan(0.9);
   });
 
+  it('primaryOverflowReason picks the dominant envelope failure', () => {
+    expect(
+      primaryOverflowReason({
+        outsidePoly: true,
+        lateralOver: 0.02,
+        heightOver: 0,
+        depthPenalty: 0,
+        lowFat: 0,
+      }),
+    ).toBe('Outside pad');
+    expect(
+      primaryOverflowReason({
+        outsidePoly: false,
+        lateralOver: 0,
+        heightOver: 0.05,
+        depthPenalty: 0,
+        lowFat: 0,
+      }),
+    ).toBe('Above apex');
+    expect(
+      primaryOverflowReason({
+        outsidePoly: false,
+        lateralOver: 0,
+        heightOver: 0,
+        depthPenalty: 0.04,
+        lowFat: 0,
+      }),
+    ).toBe('Depth spoils front');
+  });
+
   it('rankOverflowPruneTargets prefers envelope outliers over longest tips', () => {
     const tree = createSapling('juniper-procumbens', 11);
     tickDays(tree, 350, 350);
@@ -83,6 +114,15 @@ describe('shokunin practice helpers', () => {
         Math.abs(top.tipZ) > 0.02 ||
         top.overflowKey > 0.01,
     ).toBe(true);
+    // Coach reason is always one of the known labels
+    const reasons = new Set([
+      'Outside pad',
+      'Above apex',
+      'Depth spoils front',
+    ]);
+    for (const r of ranked) {
+      expect(reasons.has(r.reason)).toBe(true);
+    }
   });
 
   it('structural prune of ranked overflow reduces overflow in scorePracticeMatch', () => {

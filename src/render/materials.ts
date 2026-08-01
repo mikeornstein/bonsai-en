@@ -219,6 +219,32 @@ export function createHighlightRimMaterial(): THREE.MeshBasicMaterial {
   });
 }
 
+/**
+ * Practice coach overflow tips — warm sepia ink, distinct from selection moss.
+ * Readable on green pads and bark under product GPU and soft-GL (no neon).
+ */
+export function createCoachHighlightMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#a86a3c'),
+    transparent: true,
+    opacity: 0.4,
+    depthTest: true,
+    depthWrite: false,
+  });
+}
+
+/** Coach rim — darker warm edge for soft-GL contrast. */
+export function createCoachHighlightRimMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#6a3e28'),
+    transparent: true,
+    opacity: 0.3,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+  });
+}
+
 /** Seamless product-studio floor — pale warm stone/linen. */
 export function createGroundMaterial(): THREE.MeshStandardMaterial {
   if (!groundAlbedo) {

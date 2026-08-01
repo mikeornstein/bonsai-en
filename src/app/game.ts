@@ -35,6 +35,10 @@ import {
   type PracticeScore,
 } from '../sim/practice/score';
 import {
+  rankOverflowPruneTargets,
+  type OverflowRanked,
+} from '../sim/practice/shokunin';
+import {
   computeLiveWorldFrames,
   createPhysicsWorld,
   freezePhysics,
@@ -154,6 +158,8 @@ export class Game {
    * Pure time passage is never snapshotted (issue #67).
    */
   private structuralHistory = new StructuralHistory();
+  /** Last Practice+Inspect overflow ranking (for status / prune preselect). */
+  private coachRanked: OverflowRanked[] = [];
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -360,6 +366,8 @@ export class Game {
     this.syncPracticeButton(on);
     this.syncFrontLockButton(on);
     if (persist) writePlayMode(on ? 'practice' : 'sandbox');
+    // Coach overflow tips only in Practice; clear in Free train
+    this.updateCoachHighlights();
   }
 
   /**
@@ -453,7 +461,10 @@ export class Game {
     this.syncPracticeButton(on);
     this.setPracticeMetaVisible(on);
     this.syncFrontLockButton(on);
-    if (!on) return;
+    if (!on) {
+      this.updateCoachHighlights();
+      return;
+    }
     const s = this.getPracticeScore();
     this.scene.sumi.applyScoreFeedback(s);
     this.updatePracticeMeta(s);
@@ -464,6 +475,8 @@ export class Game {
     this.hintEl.textContent =
       'Match the ink · prune outside · wire the trunk · grow into the pad';
     this.hintEl.style.opacity = '0.85';
+    // Default tool is Inspect — show overflow coach when practice is on
+    this.updateCoachHighlights();
   }
 
   /** Persist current tree via the same path as the Save menu item. */
@@ -504,9 +517,11 @@ export class Game {
     this.scene.setSelected(nodeId);
 
     if (tool === 'inspect') {
-      this.setStatus('This branch');
+      const coach = this.coachRanked.find((r) => r.id === nodeId);
+      const msg = coach ? coach.reason : 'This branch';
+      this.setStatus(msg);
       this.refreshHud();
-      return { ok: true, message: 'This branch' };
+      return { ok: true, message: msg };
     }
 
     if (tool === 'prune') {
@@ -519,6 +534,7 @@ export class Game {
         this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('prune');
+        this.updateCoachHighlights();
       } else {
         this.structuralHistory.discardLast();
       }
@@ -534,6 +550,7 @@ export class Game {
         this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('pinch');
+        this.updateCoachHighlights();
       } else {
         this.structuralHistory.discardLast();
       }
@@ -643,6 +660,7 @@ export class Game {
     this.scene.releaseCameraOwnership();
     this.scene.frameTree(this.tree, { force: true });
     this.setStatus('New juniper sapling');
+    this.updateCoachHighlights();
     this.refreshHud();
   }
 
@@ -761,6 +779,7 @@ export class Game {
         this.scene.markDirty();
         saveLocal(this.tree);
         this.setStatus('Tree imported');
+        this.updateCoachHighlights();
         this.refreshHud();
       } catch (e) {
         this.setStatus(`Import failed: ${(e as Error).message}`);
@@ -1010,15 +1029,35 @@ export class Game {
   }
 
   setTool(tool: ToolMode): void {
+    const prev = this.tool;
     this.tool = tool;
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tool === tool);
     });
+    // Prune from Inspect: preselect top overflow tip if nothing selected
+    if (
+      tool === 'prune' &&
+      prev === 'inspect' &&
+      !this.selected &&
+      this.scene.sumi.isEnabled() &&
+      this.coachRanked.length > 0
+    ) {
+      const topId = this.coachRanked[0].id;
+      if (this.tree.nodes[topId]) {
+        this.selected = topId;
+        this.scene.setSelected(topId);
+        this.setStatus(this.coachRanked[0].reason);
+      }
+    }
+    const practiceInspect =
+      tool === 'inspect' && this.scene.sumi.isEnabled();
     const wireHint = this.hasBentOnce
       ? 'Drag wood to wire + bend · empty drag orbits · Unwire removes'
       : 'Drag a branch to wire and shape · empty space orbits the camera';
     const hints: Record<ToolMode, string> = {
-      inspect: 'Tap a branch · Drag to orbit',
+      inspect: practiceInspect
+        ? 'Warm tips sit outside the pad · tap for why'
+        : 'Tap a branch · Drag to orbit',
       prune: 'Tap a branch to cut clean',
       pinch: 'Tap a tip to pinch · laterals wake',
       wire: wireHint,
@@ -1026,6 +1065,7 @@ export class Game {
     };
     this.hintEl.textContent = hints[tool];
     this.hintEl.style.opacity = '0.85';
+    this.updateCoachHighlights();
     // First-run wire hint stays bright until the player has bent once
     if (tool === 'wire' && !this.hasBentOnce) {
       return;
@@ -1037,6 +1077,23 @@ export class Game {
         this.hintEl.style.opacity = '0.35';
       }
     }, 4000);
+  }
+
+  /**
+   * Practice + Inspect: highlight worst overflow tips via rankOverflowPruneTargets.
+   * Cleared in Free train or when leaving Inspect.
+   */
+  private updateCoachHighlights(): void {
+    const practiceOn = this.scene.sumi.isEnabled();
+    if (!practiceOn || this.tool !== 'inspect') {
+      if (this.coachRanked.length > 0) {
+        this.coachRanked = [];
+      }
+      this.scene.setCoachHighlights([]);
+      return;
+    }
+    this.coachRanked = rankOverflowPruneTargets(this.tree, { max: 3 });
+    this.scene.setCoachHighlights(this.coachRanked.map((r) => r.id));
   }
 
   setSpeed(speed: SpeedMode): void {
@@ -1132,7 +1189,16 @@ export class Game {
 
     const sel = document.getElementById('info-selection')!;
     if (this.selected && this.tree.nodes[this.selected]) {
-      sel.textContent = describeNode(this.tree, this.selected);
+      const base = describeNode(this.tree, this.selected);
+      const coach = this.coachRanked.find((r) => r.id === this.selected);
+      sel.textContent = coach ? `${coach.reason} · ${base}` : base;
+    } else if (
+      this.tool === 'inspect' &&
+      this.scene.sumi.isEnabled() &&
+      this.coachRanked.length > 0
+    ) {
+      const top = this.coachRanked[0];
+      sel.textContent = `${top.reason} · coach tip`;
     } else {
       sel.textContent = `${species.commonName}`;
     }
@@ -1207,6 +1273,11 @@ export class Game {
         if (meta !== this.lastPracticeLabel) {
           this.lastPracticeLabel = meta;
           this.updatePracticeMeta(s);
+        }
+        // Refresh overflow coach highlights with tree growth (same throttle)
+        if (this.tool === 'inspect') {
+          this.updateCoachHighlights();
+          this.refreshHud();
         }
         // Off-axis note when unlocked: score is still front-plane only (#66)
         this.refreshFrontAxisHint();
