@@ -4,15 +4,18 @@ import { environmentAt } from './time';
 import {
   addAxillaryBud,
   addFoliagePad,
+  branchOrder,
   chooseLateralAzimuth,
   countLateralChildren,
   countPendingAxillary,
   extendFromBud,
   foliageThinness,
+  minMainStemLateralDepth,
   nodeCarriesFoliage,
   targetFoliagePads,
   totalFoliageArea,
   totalWoodyVolume,
+  unbranchedRunLength,
 } from './tree';
 import { wireSetLabel } from './tools/wire';
 import type { GrowthStats, Internode, TreeState } from './types';
@@ -128,17 +131,39 @@ function updateDominanceAndBuds(
     // the axis instead of stacking several on one host (#87).
     const laterals = countLateralChildren(tree, node);
     const pendingAx = countPendingAxillary(node);
+    const order = branchOrder(tree, node.id);
+    const depth = nodeDepth(tree, node.id);
+    const run = unbranchedRunLength(tree, node.id);
+    const minStemDepth = minMainStemLateralDepth(species.saplingStemNodes);
+    // Low main-stem hosts produce the worst early spindly broom (#87 follow-up)
+    const lowMainStem = order === 0 && depth < minStemDepth;
+    const capacity = laterals + pendingAx < species.maxChildren;
+
     if (
+      !lowMainStem &&
+      capacity &&
       seasonMul > 0.6 &&
-      node.ageDays < 140 &&
-      laterals + pendingAx < species.maxChildren &&
-      rng() < species.lateralBudChance * seasonMul
+      node.ageDays < 140
     ) {
-      // Phyllotaxis + min sibling angle + optional free-space probe (#39)
-      const azimuth = chooseLateralAzimuth(tree, node.id, species, rng);
-      const bud = addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, azimuth);
-      // Head-start so the bud can flush in the same season it forms (#87)
-      if (bud) bud.breakForce = 0.22 + rng() * 0.18;
+      // Long collinear runs get a strong fork push; short runs use base chance
+      let chance = species.lateralBudChance * seasonMul;
+      if (run >= 3) chance *= 2.4;
+      if (run >= 5) chance *= 1.6;
+      // Secondary shoots ramify more eagerly than the trunk
+      if (order >= 1) chance *= 1.35;
+      // Forced fork when a stick is already too long
+      const forceFork = run >= 4 && order >= 1 && rng() < 0.12 * seasonMul;
+      if (forceFork || rng() < chance) {
+        // Phyllotaxis + min sibling angle + optional free-space probe (#39)
+        const azimuth = chooseLateralAzimuth(tree, node.id, species, rng);
+        const bud = addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, azimuth);
+        // Head-start so the bud can flush in the same season it forms (#87)
+        if (bud) {
+          bud.breakForce = forceFork
+            ? species.budBreakThreshold + 0.12
+            : 0.22 + rng() * 0.18;
+        }
+      }
     }
 
     node.wound = Math.max(0, node.wound * 0.97 - 0.002);
@@ -454,6 +479,14 @@ export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
       node.ageDays > 5
     ) {
       return false;
+    }
+    // Cap spindly tip runs: once a shoot is a long collinear stick, rest the
+    // terminal so axillary forks (preferred pass below) can claim budget (#87).
+    if (bud.type === 'terminal') {
+      const run = unbranchedRunLength(tree, node.id);
+      const order = branchOrder(tree, node.id);
+      if (run >= 5 && order >= 1) return false;
+      if (run >= 7 && order === 0) return false;
     }
     const estLen =
       (species.internodeLength.min + species.internodeLength.max) * 0.5;

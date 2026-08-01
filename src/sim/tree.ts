@@ -86,6 +86,46 @@ export function countPendingAxillary(node: Internode): number {
 }
 
 /**
+ * How many lateral takeoffs from root to this node (0 = main stem).
+ * Used to keep low trunk clean while still ramifying secondary shoots (#87).
+ */
+export function branchOrder(tree: TreeState, nodeId: NodeId): number {
+  let order = 0;
+  let cur: Internode | undefined = tree.nodes[nodeId];
+  let guard = 0;
+  while (cur?.parentId && guard++ < 256) {
+    if (isLateralOrientation(cur.orientation)) order += 1;
+    cur = tree.nodes[cur.parentId];
+  }
+  return order;
+}
+
+/**
+ * Length of the collinear tip chain ending at `nodeId` (segments back to the
+ * last lateral takeoff or the root). Long runs read as spindly sticks (#87).
+ */
+export function unbranchedRunLength(tree: TreeState, nodeId: NodeId): number {
+  let run = 0;
+  let cur: Internode | undefined = tree.nodes[nodeId];
+  while (cur && run < 64) {
+    run += 1;
+    if (!cur.parentId) break;
+    // Lateral off parent starts a new shoot — stop counting ancestors
+    if (isLateralOrientation(cur.orientation)) break;
+    cur = tree.nodes[cur.parentId];
+  }
+  return run;
+}
+
+/**
+ * Internodes up the main stem that should not host new laterals.
+ * Keeps the lower trunk line open (no broom of early spindly forks).
+ */
+export function minMainStemLateralDepth(stemNodes: number): number {
+  return Math.max(5, Math.floor(stemNodes * 0.4));
+}
+
+/**
  * Azimuths already claimed by axillary buds or lateral children on a node.
  * Terminal-like children (near parent axis) are ignored.
  * Pass `excludeBudId` when re-resolving the bud about to flush (avoid self-hit).
@@ -693,8 +733,15 @@ export function createSapling(
   }
 
   let laterals = 0;
-  // Place laterals on mid-upper stem for a readable bonsai silhouette
-  const lateralHosts = stemIds.slice(2, Math.max(3, stemIds.length - 1));
+  // Upper stem only — low hosts become long spindly forks after growth (#87)
+  const hostStart = Math.min(
+    stemIds.length - 2,
+    minMainStemLateralDepth(species.saplingStemNodes),
+  );
+  const lateralHosts = stemIds.slice(
+    Math.max(0, hostStart),
+    Math.max(hostStart + 1, stemIds.length - 1),
+  );
   for (
     let i = 0;
     i < lateralHosts.length && laterals < species.saplingLaterals;

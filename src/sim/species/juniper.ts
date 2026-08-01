@@ -20,10 +20,10 @@ export const juniper: SpeciesDefinition = {
   // Wider takeoff (~53°) so laterals open off the parent axis (#87; was ~35°)
   branchAngle: { mean: 0.92, std: 0.18 },
   /**
-   * Higher than post-#83 0.009 so forks appear more often along an axis.
-   * Paired with maxChildren=1 so extra chance spreads to new hosts, not stars (#87).
+   * Base chance for new axillaries; long unbranched runs and secondary shoots
+   * get multipliers in growth.ts. Paired with maxChildren=1 (#87).
    */
-  lateralBudChance: 0.036,
+  lateralBudChance: 0.024,
   /** One living lateral per internode — no multi-lateral clumps (#87). */
   maxChildren: 1,
   // Sibling lateral separation — avoids parallel “railroad” forks (#39)
@@ -54,12 +54,12 @@ export const juniper: SpeciesDefinition = {
   radialGrowthRate: 0.014,
   pipeCoefficient: 2200,
 
-  // Freer laterals so forks form along the shoot, not only near tips (#87)
-  apicalDominance: 0.58,
-  // Faster falloff than #83 parity — more nodes along an axis can break
-  dominanceDecay: 0.8,
+  // Moderate tip control: freer than pre-#87 but not so free low wood sprouts (#87)
+  apicalDominance: 0.66,
+  // Still faster than #83 √-parity so mid-axis can fork
+  dominanceDecay: 0.76,
   pruneStimulus: 0.35,
-  budBreakThreshold: 0.42,
+  budBreakThreshold: 0.45,
 
   // ~half area/node so total foliage per meter of axis holds (#83)
   foliageAreaPerInternode: 0.000275,

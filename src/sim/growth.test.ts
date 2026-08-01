@@ -5,6 +5,7 @@ import { getSpecies } from './species/juniper';
 import {
   azimuthFromOrientation,
   azimuthSeparation,
+  branchOrder,
   chooseLateralAzimuth,
   collectOccupiedAzimuths,
   countLateralChildren,
@@ -12,9 +13,11 @@ import {
   createSapling,
   extendFromBud,
   isLateralOrientation,
+  minMainStemLateralDepth,
   offAxisAngle,
   openSectorAzimuth,
   totalFoliageArea,
+  unbranchedRunLength,
   wrapAzimuth,
 } from './tree';
 import { pruneAt } from './tools/prune';
@@ -390,9 +393,37 @@ describe('branching form (#87)', () => {
     expect(species.branchAngle.mean).toBeGreaterThanOrEqual(0.85);
     expect(species.branchAngle.mean).toBeLessThanOrEqual(1.15);
     expect(species.maxChildren).toBe(1);
-    expect(species.lateralBudChance).toBeGreaterThanOrEqual(0.03);
-    expect(species.apicalDominance).toBeLessThanOrEqual(0.65);
-    expect(species.budBreakThreshold).toBeLessThanOrEqual(0.45);
+    expect(species.lateralBudChance).toBeGreaterThanOrEqual(0.02);
+    expect(species.apicalDominance).toBeLessThanOrEqual(0.72);
+    expect(species.budBreakThreshold).toBeLessThanOrEqual(0.5);
+  });
+
+  it('places sapling laterals on upper stem, not low trunk', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    const minDepth = minMainStemLateralDepth(species.saplingStemNodes);
+    let lowMain = 0;
+    let upperMain = 0;
+    for (const parent of Object.values(tree.nodes)) {
+      if (!parent.living) continue;
+      if (branchOrder(tree, parent.id) !== 0) continue;
+      const lats = parent.children
+        .map((id) => tree.nodes[id])
+        .filter((c) => c?.living && isLateralOrientation(c.orientation));
+      if (lats.length === 0) continue;
+      const d = (() => {
+        let n = 0;
+        let cur = parent;
+        while (cur.parentId) {
+          n += 1;
+          cur = tree.nodes[cur.parentId]!;
+        }
+        return n;
+      })();
+      if (d < minDepth) lowMain += lats.length;
+      else upperMain += lats.length;
+    }
+    expect(lowMain).toBe(0);
+    expect(upperMain).toBeGreaterThanOrEqual(species.saplingLaterals);
   });
 
   it('extendFromBud rejects a second lateral on the same host', () => {
@@ -475,6 +506,10 @@ describe('branching form (#87)', () => {
     let takeoffSum = 0;
     let takeoffN = 0;
     let lateralHosts = 0;
+    let lowMainLaterals = 0;
+    let longSecondaryRuns = 0;
+    let secondaryTips = 0;
+    const minDepth = minMainStemLateralDepth(species.saplingStemNodes);
 
     for (const parent of Object.values(tree.nodes)) {
       if (!parent.living) continue;
@@ -487,7 +522,23 @@ describe('branching form (#87)', () => {
       for (const lat of laterals) {
         takeoffSum += offAxisAngle(lat.orientation);
         takeoffN += 1;
+        if (branchOrder(tree, parent.id) === 0) {
+          let d = 0;
+          let cur: typeof parent | undefined = parent;
+          while (cur?.parentId) {
+            d += 1;
+            cur = tree.nodes[cur.parentId];
+          }
+          if (d < minDepth) lowMainLaterals += 1;
+        }
       }
+    }
+
+    for (const n of Object.values(tree.nodes)) {
+      if (!n.living || n.children.length > 0) continue;
+      if (branchOrder(tree, n.id) < 1) continue;
+      secondaryTips += 1;
+      if (unbranchedRunLength(tree, n.id) >= 7) longSecondaryRuns += 1;
     }
 
     // Prefer many single-lateral hosts along axes (not a few multi-fork stars)
@@ -500,6 +551,13 @@ describe('branching form (#87)', () => {
     expect(takeoffN).toBeGreaterThan(12);
     // Mean takeoff well above the old ~0.62 acute band
     expect(takeoffSum / takeoffN).toBeGreaterThan(0.7);
+    // Few (ideally zero) new forks from low trunk broom zone
+    expect(lowMainLaterals).toBeLessThanOrEqual(2);
+    // Secondary tips should not run as long collinear sticks
+    expect(secondaryTips).toBeGreaterThan(5);
+    expect(longSecondaryRuns).toBeLessThanOrEqual(
+      Math.max(2, Math.floor(secondaryTips * 0.15)),
+    );
   });
 });
 
