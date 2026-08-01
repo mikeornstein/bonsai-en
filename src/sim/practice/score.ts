@@ -192,12 +192,19 @@ function targetBandWidth(
   return { width: maxX - minX, present: true, mid: (minX + maxX) / 2 };
 }
 
-function gradeFromScore(score: number): PracticeGrade {
+/** Grade band thresholds (single source of truth for HUD + milestones). */
+export const PRACTICE_GRADE_THRESHOLDS = {
+  forming: 0.45,
+  close: 0.72,
+  match: 0.82,
+} as const;
+
+export function gradeFromScore(score: number): PracticeGrade {
   // Calibrated so a stock sapling is usually "forming", trained trees can
   // reach "close", and "match" requires deliberate envelope work.
-  if (score >= 0.82) return 'match';
-  if (score >= 0.72) return 'close';
-  if (score >= 0.45) return 'forming';
+  if (score >= PRACTICE_GRADE_THRESHOLDS.match) return 'match';
+  if (score >= PRACTICE_GRADE_THRESHOLDS.close) return 'close';
+  if (score >= PRACTICE_GRADE_THRESHOLDS.forming) return 'forming';
   return 'far';
 }
 

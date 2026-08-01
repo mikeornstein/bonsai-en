@@ -39,6 +39,13 @@ import {
   type OverflowRanked,
 } from '../sim/practice/shokunin';
 import {
+  createPracticeMilestoneState,
+  observePracticeScore,
+  resetPracticeMilestones,
+  seedPracticeScore,
+  type PracticeMilestoneState,
+} from '../sim/practice/milestones';
+import {
   computeLiveWorldFrames,
   createPhysicsWorld,
   freezePhysics,
@@ -151,6 +158,11 @@ export class Game {
   private lastPracticeLabel = '';
   /** Last off-axis practice note state (avoid thrashing hint every tick). */
   private lastFrontOffAxis = false;
+  /** Session close/match celebrations (best-so-far; no boundary spam). */
+  private practiceMilestones: PracticeMilestoneState =
+    createPracticeMilestoneState();
+  /** Hold milestone status briefly so regular grade labels don't clobber it. */
+  private milestoneHoldUntil = 0;
   /** Throttle HUD refresh under year/month acceleration. */
   private hudCooldownTimer = 0;
   /**
@@ -346,10 +358,13 @@ export class Game {
       this.scene.sumi.applyScoreFeedback(s);
       this.updatePracticeMeta(s);
       this.setPracticeMetaVisible(true);
+      // Seed without celebrating on toggle — only live score rises celebrate.
+      seedPracticeScore(this.practiceMilestones, s.score);
       // Front snap note; ongoing grade lives in meta (#65 / #66)
       this.setStatus('Viewing face');
       this.lastPracticeLabel = this.formatPracticeMeta(s);
       this.lastFrontOffAxis = false;
+      this.syncPracticeBestMeta(true);
       this.hintEl.textContent =
         'Match the ink · prune outside · wire the trunk · grow into the pad';
       this.hintEl.style.opacity = '0.85';
@@ -360,6 +375,8 @@ export class Game {
       this.setStatus('Free train');
       this.lastPracticeLabel = '';
       this.lastFrontOffAxis = false;
+      this.milestoneHoldUntil = 0;
+      this.syncPracticeBestMeta(false);
       this.hintEl.textContent = 'Free train · tools unchanged';
       this.hintEl.style.opacity = '0.55';
     }
@@ -463,14 +480,18 @@ export class Game {
     this.syncFrontLockButton(on);
     if (!on) {
       this.updateCoachHighlights();
+      this.syncPracticeBestMeta(false);
       return;
     }
     const s = this.getPracticeScore();
     this.scene.sumi.applyScoreFeedback(s);
     this.updatePracticeMeta(s);
+    // Seed best quietly; do not celebrate boot (restored trees may already be close).
+    seedPracticeScore(this.practiceMilestones, s.score);
     this.lastPracticeLabel = this.formatPracticeMeta(s);
     const status = this.statusEl.textContent?.trim() ?? '';
     if (!status) this.setStatus(s.label);
+    this.syncPracticeBestMeta(true);
     // First-run / practice-default hint (shokunin-aligned)
     this.hintEl.textContent =
       'Match the ink · prune outside · wire the trunk · grow into the pad';
@@ -659,9 +680,21 @@ export class Game {
     // New plant: clear owned framing and fit the sapling (#60)
     this.scene.releaseCameraOwnership();
     this.scene.frameTree(this.tree, { force: true });
+    // Fresh session milestones so close/match can celebrate again
+    resetPracticeMilestones(this.practiceMilestones);
+    this.milestoneHoldUntil = 0;
+    this.lastPracticeLabel = '';
     this.setStatus('New juniper sapling');
     this.updateCoachHighlights();
     this.refreshHud();
+    if (this.scene.sumi.isEnabled()) {
+      const s = this.getPracticeScore();
+      seedPracticeScore(this.practiceMilestones, s.score);
+      this.scene.sumi.applyScoreFeedback(s);
+      this.syncPracticeBestMeta(true);
+    } else {
+      this.syncPracticeBestMeta(false);
+    }
   }
 
   /**
@@ -778,6 +811,16 @@ export class Game {
         this.syncPhysics();
         this.scene.markDirty();
         saveLocal(this.tree);
+        // New tree → fresh milestones; seed so restored close/match does not flash
+        resetPracticeMilestones(this.practiceMilestones);
+        this.milestoneHoldUntil = 0;
+        this.lastPracticeLabel = '';
+        if (this.scene.sumi.isEnabled()) {
+          seedPracticeScore(this.practiceMilestones, this.getPracticeScore().score);
+          this.syncPracticeBestMeta(true);
+        } else {
+          this.syncPracticeBestMeta(false);
+        }
         this.setStatus('Tree imported');
         this.updateCoachHighlights();
         this.refreshHud();
@@ -1121,8 +1164,9 @@ export class Game {
     }
   }
 
-  private setStatus(msg: string): void {
+  private setStatus(msg: string, opts?: { milestone?: boolean }): void {
     this.statusEl.textContent = msg;
+    this.statusEl.classList.toggle('milestone-soft', Boolean(opts?.milestone));
     // Brief unfade when status fires during idle chrome
     this.statusUnfadeTimer = 4;
     document.getElementById('hud')?.classList.remove('idle-fade');
@@ -1142,6 +1186,53 @@ export class Game {
     document
       .getElementById('info-practice-row')
       ?.classList.toggle('hidden', !on);
+  }
+
+  /**
+   * Quiet session-best practice score in meta while Practice is on.
+   * Free train hides the row entirely (no celebration chrome).
+   */
+  private syncPracticeBestMeta(practiceOn: boolean): void {
+    const row = document.getElementById('info-practice-best');
+    const val = document.getElementById('info-practice-best-val');
+    if (!row || !val) return;
+    if (!practiceOn) {
+      row.classList.add('hidden');
+      return;
+    }
+    row.classList.remove('hidden');
+    const best = this.practiceMilestones.bestScore;
+    val.textContent = best > 0 ? best.toFixed(2) : '—';
+  }
+
+  /**
+   * Practice HUD tick: grade meta + session best + one-time close/match
+   * acknowledgments (zen tone; no free-train chrome). Status free for tools (#65).
+   */
+  private updatePracticeHud(): void {
+    const s = this.getPracticeScore();
+    this.scene.sumi.applyScoreFeedback(s);
+    this.updatePracticeMeta(s);
+
+    const now = performance.now();
+    const event = observePracticeScore(this.practiceMilestones, s.score);
+    this.syncPracticeBestMeta(true);
+
+    if (event) {
+      this.setStatus(event.message, { milestone: true });
+      this.scene.sumi.pulseMilestone(event.kind);
+      this.lastPracticeLabel = this.formatPracticeMeta(s);
+      // Hold long enough that the next 1–2 throttled ticks don't bury it
+      this.milestoneHoldUntil = now + 4200;
+      return;
+    }
+
+    if (now < this.milestoneHoldUntil) return;
+
+    const meta = this.formatPracticeMeta(s);
+    if (meta !== this.lastPracticeLabel) {
+      this.lastPracticeLabel = meta;
+    }
   }
 
   /** After ~30s idle, fade HUD; any input restores. */
@@ -1261,19 +1352,13 @@ export class Game {
       saveLocal(this.tree);
     }
 
-    // Practice mode: quiet grade in meta + ink feedback (throttled ~1.2s).
-    // Status stays free for tool/event messages (#65).
+    // Practice mode: quiet grade in meta + session milestones (throttled ~1.2s).
+    // Status stays free for tool/event messages except one-time milestones (#65/#69).
     if (this.scene.sumi.isEnabled()) {
       this.practiceHudTimer += dt;
       if (this.practiceHudTimer > 1.2) {
         this.practiceHudTimer = 0;
-        const s = this.getPracticeScore();
-        this.scene.sumi.applyScoreFeedback(s);
-        const meta = this.formatPracticeMeta(s);
-        if (meta !== this.lastPracticeLabel) {
-          this.lastPracticeLabel = meta;
-          this.updatePracticeMeta(s);
-        }
+        this.updatePracticeHud();
         // Refresh overflow coach highlights with tree growth (same throttle)
         if (this.tool === 'inspect') {
           this.updateCoachHighlights();
