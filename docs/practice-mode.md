@@ -18,11 +18,14 @@
 
 | Control | Behavior |
 |---------|----------|
-| Default / first visit | **Practice** — ghost + grade (status e.g. `Practice · forming 68`) |
-| `⋯ → Free train` | Sandbox — hide ghost, stop grade thrash; tools unchanged |
-| `⋯ → Practice` | Restore ghost + scoring |
+| Default / first visit | **Practice** — ghost + grade (status e.g. `Practice · forming 68`); soft-snaps play camera to **front viewing face** |
+| `⋯ → Free train` | Sandbox — hide ghost, stop grade thrash; tools unchanged; front lock cleared |
+| `⋯ → Practice` | Restore ghost + scoring + soft front snap (status `Viewing face`) |
+| `⋯ → Lock front` | Practice only — disable orbit rotate + snap to front so score and eyes stay aligned |
+| Off-axis (unlocked) | Quiet hint: “Score is front silhouette · Lock front in ⋯” |
 | Preference | Survives reload; share/import keep last user mode |
 | First-run hint | “Match the ink · prune outside · wire the trunk · grow into the pad” |
+| Harness | `setFrontLock(bool)`, `isFrontLock()`, `snapToFrontFace()`; ortho `setView('front')` unchanged |
 
 **Art grounding (#53):** stem S-curve and cloud envelope are tuned from CC moyogi diagrams/photos plus original ink plates (not a freehand diamond). Ink hierarchy is stem > outline > fill so the ghost stays quiet against living wood.
 
@@ -182,7 +185,7 @@ npm run practice:shokunin
 
 ## Recommendations (follow-ups)
 
-1. **View-locked “front for practice”** — optional snap camera to front when Practice turns on so ink and score agree with what the player sees.  
+1. ~~**View-locked “front for practice”**~~ — **done (#66):** Practice enable soft-snaps front; optional **Lock front** in ⋯; off-axis quiet note when unlocked.  
 2. **Persist practice score in the meta panel** (not only status) so tool messages don’t bury it.  
 3. **Celebrate match** — call `acknowledge()` + soft ink pulse when grade first hits `match`.  
 4. **Multiple targets** — cascade, literati, windswept packs once one shape is fun.  
