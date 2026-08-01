@@ -28,6 +28,19 @@ import { applyWire, removeWire } from './tools/wire';
 import { environmentAt, vitalityWord } from './time';
 import type { Internode, NodeId } from './types';
 
+function mainStemContinuation(
+  tree: ReturnType<typeof createSapling>,
+  nodeId: NodeId,
+): NodeId | null {
+  const n = tree.nodes[nodeId];
+  if (!n) return null;
+  for (const id of n.children) {
+    const c = tree.nodes[id];
+    if (c?.living && !isLateralOrientation(c.orientation)) return id;
+  }
+  return null;
+}
+
 describe('sapling', () => {
   it('creates a living juniper with foliage', () => {
     const tree = createSapling('juniper-procumbens', 42);
@@ -495,15 +508,11 @@ describe('branching form (#87)', () => {
     const tree = createSapling('juniper-procumbens', 42);
     const frames = computeWorldFrames(tree);
     // Walk near-axis main stem
-    const stem: string[] = [];
-    let cur: string | null = tree.rootId;
+    const stem: NodeId[] = [];
+    let cur: NodeId | null = tree.rootId;
     while (cur && stem.length < 40) {
       stem.push(cur);
-      const n = tree.nodes[cur];
-      const cont = n.children
-        .map((id) => tree.nodes[id])
-        .find((c) => c?.living && !isLateralOrientation(c.orientation));
-      cur = cont?.id ?? null;
+      cur = mainStemContinuation(tree, cur);
     }
     expect(stem.length).toBe(species.saplingStemNodes);
     const tip = frames.get(stem[stem.length - 1])!;
@@ -521,14 +530,10 @@ describe('branching form (#87)', () => {
     for (let i = 0; i < 12; i++) tickDays(tree, 60, 60);
 
     let stemNodes = 0;
-    let cur: string | null = tree.rootId;
+    let cur: NodeId | null = tree.rootId;
     while (cur && stemNodes < 80) {
       stemNodes += 1;
-      const n = tree.nodes[cur];
-      const cont = n.children
-        .map((id) => tree.nodes[id])
-        .find((c) => c?.living && !isLateralOrientation(c.orientation));
-      cur = cont?.id ?? null;
+      cur = mainStemContinuation(tree, cur);
     }
     expect(stemNodes).toBeLessThanOrEqual(cap);
     expect(stemNodes).toBeGreaterThanOrEqual(species.saplingStemNodes);

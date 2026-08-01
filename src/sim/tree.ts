@@ -15,6 +15,7 @@ import { getSpecies } from './species/juniper';
 import type { SpeciesDefinition } from './species/types';
 import type {
   Bud,
+  BudType,
   FoliageCluster,
   Internode,
   NodeId,
@@ -145,13 +146,13 @@ export function maxMainStemNodes(stemNodes: number): number {
  */
 export function spawnShootRadius(
   parentRadius: number,
-  budType: 'terminal' | 'axillary',
+  budType: BudType,
   species: SpeciesDefinition,
 ): number {
   if (budType === 'terminal') {
     return Math.max(species.minRadius, parentRadius * 0.78);
   }
-  // ~1.4× tip floor (~0.6 mm for juniper); never thicker than half the parent
+  // Axillary / adventitious: tip band (~1.4× minRadius); never thicker than half parent
   const tipStart = species.minRadius * 1.4;
   return Math.max(
     species.minRadius,
