@@ -5,6 +5,8 @@ import {
   addAxillaryBud,
   addFoliagePad,
   chooseLateralAzimuth,
+  countLateralChildren,
+  countPendingAxillary,
   extendFromBud,
   foliageThinness,
   nodeCarriesFoliage,
@@ -97,35 +99,46 @@ function updateDominanceAndBuds(
         continue;
       }
 
-      // Dormant buds accumulate break force from season & wounds, reduced by dominance
+      // Dormant buds accumulate break force from season & wounds, reduced by dominance.
+      // Axillaries get a slightly stronger seasonal push so forks appear along the
+      // axis instead of only long terminal sticks (#87).
+      const axBoost = bud.type === 'axillary' ? 1.35 : 1;
       const seasonal =
-        seasonMul > 0.5 ? 0.01 * seasonMul : 0.0015 * seasonMul;
+        (seasonMul > 0.5 ? 0.01 * seasonMul : 0.0015 * seasonMul) * axBoost;
       const woundBoost = node.wound * 0.08;
       const depthBoost = nodeDepth(tree, node.id) * 0.0008;
       bud.breakForce += (seasonal + woundBoost + depthBoost) * (1 - sup);
       bud.breakForce *= 0.994; // slow decay
       bud.breakForce = clamp(bud.breakForce, 0, 1.5);
 
+      const breakChance =
+        (bud.type === 'axillary' ? 0.11 : 0.06) * seasonMul;
       if (
         bud.breakForce >= species.budBreakThreshold &&
         seasonMul > 0.35 &&
-        rng() < 0.06 * seasonMul
+        rng() < breakChance
       ) {
         bud.state = 'flushing';
         bud.ageDays = 0;
       }
     }
 
-    // Chance to form new axillary buds on young nodes during flush
+    // Chance to form new axillary buds on young nodes during flush.
+    // Capacity = maxChildren laterals (living + pending); spreads forks along
+    // the axis instead of stacking several on one host (#87).
+    const laterals = countLateralChildren(tree, node);
+    const pendingAx = countPendingAxillary(node);
     if (
       seasonMul > 0.6 &&
-      node.ageDays < 120 &&
-      node.buds.filter((b) => b.type === 'axillary').length < 3 &&
+      node.ageDays < 140 &&
+      laterals + pendingAx < species.maxChildren &&
       rng() < species.lateralBudChance * seasonMul
     ) {
       // Phyllotaxis + min sibling angle + optional free-space probe (#39)
       const azimuth = chooseLateralAzimuth(tree, node.id, species, rng);
-      addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, azimuth);
+      const bud = addAxillaryBud(tree, node.id, 0.4 + rng() * 0.5, azimuth);
+      // Head-start so the bud can flush in the same season it forms (#87)
+      if (bud) bud.breakForce = 0.22 + rng() * 0.18;
     }
 
     node.wound = Math.max(0, node.wound * 0.97 - 0.002);
@@ -410,11 +423,12 @@ export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
   // 2. Dominance & buds
   updateDominanceAndBuds(tree, species, seasonMul, rng);
 
-  // 3. Primary growth — extend internodes + flush new nodes
+  // 3. Primary growth — lengthen, then flush buds.
+  // Axillary flushes run before terminals so forks claim the daily new-node
+  // budget ahead of long collinear tip chains (#87).
   const nodes = Object.values(tree.nodes);
   for (const node of nodes) {
     if (!node.living) continue;
-    // Extend toward target length
     if (node.length < node.targetLength - 1e-6 && primaryBudget > 0) {
       const gap = node.targetLength - node.length;
       const step = Math.min(gap, node.targetLength * 0.08 * seasonMul + 0.0005);
@@ -425,34 +439,50 @@ export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
         stats.primarySpent += cost;
       }
     }
+  }
 
+  const tryFlushBud = (
+    node: Internode,
+    bud: (typeof node.buds)[number],
+  ): boolean => {
+    if (bud.state !== 'flushing' || primaryBudget < 0.5) return false;
+    // Only one extension attempt per bud while flushing (age gate)
+    if (bud.ageDays < 3) return false;
+    if (
+      node.length < node.targetLength * 0.85 &&
+      bud.type === 'terminal' &&
+      node.ageDays > 5
+    ) {
+      return false;
+    }
+    const estLen =
+      (species.internodeLength.min + species.internodeLength.max) * 0.5;
+    const cost = estLen * species.primaryCostPerMeter * 0.45;
+    if (cost > primaryBudget) return false;
+    if (Object.keys(tree.nodes).length >= MAX_TREE_NODES) return false;
+    if (stats.newNodes >= 3) return false;
+
+    const child = extendFromBud(tree, node.id, bud, species, rng);
+    if (!child) return false;
+    primaryBudget -= cost;
+    stats.primarySpent += cost;
+    stats.newNodes += 1;
+    bud.state = 'dormant';
+    bud.breakForce = 0.05;
+    bud.ageDays = 0;
+    return true;
+  };
+
+  for (const node of nodes) {
+    if (!node.living) continue;
     for (const bud of node.buds) {
-      if (bud.state !== 'flushing' || primaryBudget < 0.5) continue;
-      // Only one extension attempt per bud while flushing (age gate)
-      if (bud.ageDays < 3) continue;
-      if (node.length < node.targetLength * 0.85 && bud.type === 'terminal' && node.ageDays > 5) {
-        continue;
-      }
-      // Cost to produce a new internode
-      const estLen =
-        (species.internodeLength.min + species.internodeLength.max) * 0.5;
-      const cost = estLen * species.primaryCostPerMeter * 0.45;
-      if (cost > primaryBudget) continue;
-      // Cap complexity for real-time mesh + mobile
-      if (Object.keys(tree.nodes).length >= MAX_TREE_NODES) continue;
-      // Limit simultaneous flushes under acceleration
-      if (stats.newNodes >= 3) continue;
-
-      const child = extendFromBud(tree, node.id, bud, species, rng);
-      if (child) {
-        primaryBudget -= cost;
-        stats.primarySpent += cost;
-        stats.newNodes += 1;
-        // Rest this bud after producing a shoot
-        bud.state = 'dormant';
-        bud.breakForce = 0.05;
-        bud.ageDays = 0;
-      }
+      if (bud.type === 'axillary') tryFlushBud(node, bud);
+    }
+  }
+  for (const node of nodes) {
+    if (!node.living) continue;
+    for (const bud of node.buds) {
+      if (bud.type === 'terminal') tryFlushBud(node, bud);
     }
   }
 

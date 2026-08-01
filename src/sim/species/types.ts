@@ -23,7 +23,10 @@ export interface SpeciesDefinition {
   branchAngle: { mean: number; std: number };
   /** Probability a flushing node forms a lateral bud each day during flush. */
   lateralBudChance: number;
-  /** Max children per node (excluding terminal extension). */
+  /**
+   * Max *lateral* children per node (off-axis forks).
+   * Terminal tip extension does not count against this cap.
+   */
   maxChildren: number;
 
   /**

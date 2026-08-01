@@ -50,10 +50,39 @@ export function azimuthFromOrientation(orient: Quat): number {
   return Math.atan2(dir[0], dir[2]);
 }
 
-/** Off-axis angle of a child orientation from the parent local axis (radians). */
-function offAxisAngle(orient: Quat): number {
+/**
+ * Off-axis angle of a child orientation from the parent local +Y (radians).
+ * Terminal extensions sit near 0; laterals near `species.branchAngle`.
+ */
+export function offAxisAngle(orient: Quat): number {
   const dir = quatRotateVec3(orient, vec3(0, 1, 0));
   return Math.acos(clamp(dir[1], -1, 1));
+}
+
+/** Child counts as a true lateral (not collinear tip extension). */
+export const LATERAL_OFF_AXIS = 0.25;
+
+export function isLateralOrientation(orient: Quat): boolean {
+  return offAxisAngle(orient) > LATERAL_OFF_AXIS;
+}
+
+/** Living off-axis children on a node (forks, not the tip continuation). */
+export function countLateralChildren(tree: TreeState, node: Internode): number {
+  let n = 0;
+  for (const childId of node.children) {
+    const child = tree.nodes[childId];
+    if (child?.living && isLateralOrientation(child.orientation)) n += 1;
+  }
+  return n;
+}
+
+/** Non-dead axillary buds still sitting on the node (pending or flushing). */
+export function countPendingAxillary(node: Internode): number {
+  let n = 0;
+  for (const bud of node.buds) {
+    if (bud.type === 'axillary' && bud.state !== 'dead') n += 1;
+  }
+  return n;
 }
 
 /**
@@ -76,7 +105,7 @@ export function collectOccupiedAzimuths(
   for (const childId of node.children) {
     const child = tree.nodes[childId];
     if (!child?.living) continue;
-    if (offAxisAngle(child.orientation) > 0.25) {
+    if (isLateralOrientation(child.orientation)) {
       az.push(azimuthFromOrientation(child.orientation));
     }
   }
@@ -677,7 +706,7 @@ export function createSapling(
       laterals * ((Math.PI * 2) / Math.max(1, species.saplingLaterals)) +
       randNormal(rng, 0, 0.25);
     const angle = Math.max(
-      0.35,
+      species.branchAngle.mean * 0.55,
       randNormal(rng, species.branchAngle.mean, species.branchAngle.std),
     );
     const yaw = quatFromAxisAngle(vec3(0, 1, 0), az);
@@ -828,7 +857,11 @@ export function extendFromBud(
 ): Internode | null {
   const parent = tree.nodes[nodeId];
   if (!parent?.living || bud.state === 'dead') return null;
-  if (parent.children.length >= species.maxChildren && bud.type !== 'terminal') {
+  // Cap laterals only — tip extension may always continue past maxChildren (#87)
+  if (
+    bud.type !== 'terminal' &&
+    countLateralChildren(tree, parent) >= species.maxChildren
+  ) {
     return null;
   }
 
@@ -850,10 +883,10 @@ export function extendFromBud(
       bud.id,
     );
     bud.azimuth = azimuth;
-    const angle = randNormal(
-      rng,
-      species.branchAngle.mean,
-      species.branchAngle.std,
+    // Floor so std never collapses a lateral into a near-collinear stick (#87)
+    const angle = Math.max(
+      species.branchAngle.mean * 0.55,
+      randNormal(rng, species.branchAngle.mean, species.branchAngle.std),
     );
     const yaw = quatFromAxisAngle(vec3(0, 1, 0), azimuth);
     const pitch = quatFromAxisAngle(vec3(1, 0, 0), angle);

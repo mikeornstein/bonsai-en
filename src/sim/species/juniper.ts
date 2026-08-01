@@ -17,11 +17,15 @@ export const juniper: SpeciesDefinition = {
   minRadius: 0.00045,
   maxRadius: 0.05,
 
-  // Acute branching typical of juniper pads
-  branchAngle: { mean: 0.62, std: 0.16 },
-  // Halved with 2× axial nodes so laterals/m stay similar (#83)
-  lateralBudChance: 0.009,
-  maxChildren: 3,
+  // Wider takeoff (~53°) so laterals open off the parent axis (#87; was ~35°)
+  branchAngle: { mean: 0.92, std: 0.18 },
+  /**
+   * Higher than post-#83 0.009 so forks appear more often along an axis.
+   * Paired with maxChildren=1 so extra chance spreads to new hosts, not stars (#87).
+   */
+  lateralBudChance: 0.036,
+  /** One living lateral per internode — no multi-lateral clumps (#87). */
+  maxChildren: 1,
   // Sibling lateral separation — avoids parallel “railroad” forks (#39)
   /** ~35° minimum azimuth between laterals on the same node. */
   minSiblingAngle: 0.61,
@@ -50,11 +54,12 @@ export const juniper: SpeciesDefinition = {
   radialGrowthRate: 0.014,
   pipeCoefficient: 2200,
 
-  apicalDominance: 0.78,
-  // √0.55 so per-meter apical suppression matches pre-#83 hop count
-  dominanceDecay: 0.742,
+  // Freer laterals so forks form along the shoot, not only near tips (#87)
+  apicalDominance: 0.58,
+  // Faster falloff than #83 parity — more nodes along an axis can break
+  dominanceDecay: 0.8,
   pruneStimulus: 0.35,
-  budBreakThreshold: 0.55,
+  budBreakThreshold: 0.42,
 
   // ~half area/node so total foliage per meter of axis holds (#83)
   foliageAreaPerInternode: 0.000275,
