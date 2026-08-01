@@ -13,6 +13,7 @@ import {
   unpackTreeCompact,
 } from './compact';
 import {
+  buildShareUrl,
   estimateShareUrlLength,
   MAX_SHARE_URL_LENGTH,
   serializeTreeForShare,
@@ -250,3 +251,34 @@ describe('share link size capacity', () => {
     expect(MAX_SHARE_URL_LENGTH).toBeLessThanOrEqual(32_000);
   });
 });
+
+describe('buildShareUrl', () => {
+  it('returns an absolute url under the size budget for a young tree', () => {
+    const tree = createSapling('juniper-procumbens', 7);
+    const built = buildShareUrl(
+      tree,
+      'https://mikeornstein.github.io/bonsai-en/',
+    );
+    expect(built.ok).toBe(true);
+    if (!built.ok) return;
+    expect(
+      built.url.startsWith('https://mikeornstein.github.io/bonsai-en/#s='),
+    ).toBe(true);
+    expect(built.url.length).toBeLessThanOrEqual(MAX_SHARE_URL_LENGTH);
+    const restored = treeFromShareHash(built.url.slice(built.url.indexOf('#')));
+    expect(restored).not.toBeNull();
+    expect(restored!.rootId).toBe(tree.rootId);
+  });
+
+  it('reports too_large when the URL would exceed MAX_SHARE_URL_LENGTH', () => {
+    const tree = createSapling('juniper-procumbens', 7);
+    const hash = treeToShareHash(tree);
+    const hugeBase = 'https://example.com/' + 'x'.repeat(MAX_SHARE_URL_LENGTH);
+    const built = buildShareUrl(tree, hugeBase);
+    expect(built.ok).toBe(false);
+    if (built.ok) return;
+    expect(built.reason).toBe('too_large');
+    expect(built.length).toBe(hugeBase.length + hash.length);
+  });
+});
+

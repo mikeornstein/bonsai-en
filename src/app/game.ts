@@ -22,6 +22,7 @@ import { StructuralHistory } from '../sim/history';
 import type { NodeId, TreeState, Vec3 } from '../sim/types';
 import { BonsaiScene } from '../render/scene';
 import {
+  buildShareUrl,
   clearLocal,
   copyShareLink,
   loadLocal,
@@ -29,6 +30,16 @@ import {
   treeFromShareHash,
   treeToShareHash,
 } from '../share/encode';
+import {
+  blobToShareFile,
+  downloadBlob,
+  pickShareData,
+  portraitFilename,
+  shareDraftText,
+  shareDraftWithUrl,
+  systemShare,
+  xIntentUrl,
+} from '../share/social';
 import { getSpecies } from '../sim/species/juniper';
 import {
   scorePracticeMatch,
@@ -1057,18 +1068,28 @@ export class Game {
       fileInput.value = '';
     });
 
-    document.getElementById('btn-share')?.addEventListener('click', async () => {
+    document.getElementById('btn-share')?.addEventListener('click', () => {
       closeFiles();
-      const ok = await copyShareLink(this.tree);
-      if (ok) {
-        this.setStatus('Share link copied');
-      } else {
-        // Link capacity exceeded — fall back to full JSON (same as Export)
-        downloadTree(this.tree);
-        this.setStatus(
-          'Tree too large for a share link — file exported (use Export for full saves anytime)',
-        );
-      }
+      this.openSharePanel();
+    });
+
+    document.getElementById('share-close')?.addEventListener('click', () => {
+      this.closeSharePanel();
+    });
+    document.getElementById('share-backdrop')?.addEventListener('click', (e) => {
+      if (e.target === e.currentTarget) this.closeSharePanel();
+    });
+    document.getElementById('share-copy')?.addEventListener('click', () => {
+      void this.shareCopyLink();
+    });
+    document.getElementById('share-system')?.addEventListener('click', () => {
+      void this.shareSystem();
+    });
+    document.getElementById('share-x')?.addEventListener('click', () => {
+      void this.shareToX();
+    });
+    document.getElementById('share-image')?.addEventListener('click', () => {
+      void this.shareSaveImage();
     });
 
     document.getElementById('btn-mute')?.addEventListener('click', async () => {
@@ -1118,8 +1139,255 @@ export class Game {
         e.preventDefault();
         this.setSpeed(this.speed === 'pause' ? 'live' : 'pause');
       }
-      if (key === 'escape') closeFiles();
+      if (key === 'escape') {
+        if (this.isSharePanelOpen()) {
+          this.closeSharePanel();
+          return;
+        }
+        closeFiles();
+      }
     });
+  }
+
+  private isSharePanelOpen(): boolean {
+    const el = document.getElementById('share-backdrop');
+    return Boolean(el && !el.hidden);
+  }
+
+  private openSharePanel(): void {
+    const backdrop = document.getElementById('share-backdrop');
+    if (!backdrop) return;
+    backdrop.hidden = false;
+    this.refreshSharePanel();
+    const copyBtn = document.getElementById(
+      'share-copy',
+    ) as HTMLButtonElement | null;
+    const systemBtn = document.getElementById(
+      'share-system',
+    ) as HTMLButtonElement | null;
+    const focusEl =
+      copyBtn && !copyBtn.disabled
+        ? copyBtn
+        : systemBtn && !systemBtn.disabled
+          ? systemBtn
+          : document.getElementById('share-close');
+    focusEl?.focus();
+  }
+
+  private closeSharePanel(): void {
+    const backdrop = document.getElementById('share-backdrop');
+    if (backdrop) backdrop.hidden = true;
+  }
+
+  private refreshSharePanel(): void {
+    const built = buildShareUrl(this.tree);
+    const hint = document.getElementById('share-hint');
+    const urlEl = document.getElementById('share-url');
+    const copyBtn = document.getElementById(
+      'share-copy',
+    ) as HTMLButtonElement | null;
+    const systemBtn = document.getElementById(
+      'share-system',
+    ) as HTMLButtonElement | null;
+    const xBtn = document.getElementById('share-x') as HTMLButtonElement | null;
+
+    if (built.ok) {
+      if (hint) {
+        hint.textContent =
+          'Copy a clean link for Messages, open the system share sheet, or draft a post to X with a tree portrait.';
+      }
+      if (urlEl) {
+        urlEl.hidden = false;
+        urlEl.textContent = built.url;
+      }
+      if (copyBtn) {
+        copyBtn.disabled = false;
+        copyBtn.classList.add('primary');
+      }
+    } else {
+      if (hint) {
+        hint.textContent =
+          'This tree is too large for a share link. Save a portrait image, export the JSON file, or post to X with the image only.';
+      }
+      if (urlEl) {
+        urlEl.hidden = true;
+        urlEl.textContent = '';
+      }
+      if (copyBtn) {
+        copyBtn.disabled = true;
+        copyBtn.classList.remove('primary');
+      }
+    }
+
+    if (systemBtn) {
+      systemBtn.disabled = typeof navigator.share !== 'function';
+      systemBtn.title = built.ok
+        ? 'Open the device share sheet (Messages on iPhone)'
+        : 'Share a portrait image (link unavailable — tree too large for a URL)';
+    }
+    if (xBtn) xBtn.disabled = false;
+  }
+
+  private async shareCopyLink(): Promise<void> {
+    const result = await copyShareLink(this.tree);
+    if (result.status === 'copied') {
+      this.setStatus('Link copied — paste into Messages');
+      this.refreshSharePanel();
+      return;
+    }
+    if (result.status === 'too_large') {
+      this.setStatus(
+        'Tree too large for a share link — try Save image or Export',
+      );
+      this.refreshSharePanel();
+      return;
+    }
+    this.refreshSharePanel();
+    const urlEl = document.getElementById('share-url');
+    if (urlEl && result.url) {
+      urlEl.hidden = false;
+      urlEl.textContent = result.url;
+    }
+    this.setStatus('Clipboard blocked — select the link below and copy');
+  }
+
+  private async shareSystem(): Promise<void> {
+    if (typeof navigator.share !== 'function') {
+      this.setStatus('System share unavailable — use Copy link');
+      return;
+    }
+    const built = buildShareUrl(this.tree);
+    const url = built.ok ? built.url : null;
+    let file: File | null = null;
+    try {
+      const blob = await this.captureSharePortrait();
+      if (blob) {
+        file = blobToShareFile(blob, portraitFilename(this.tree.speciesId));
+      }
+    } catch {
+      // image optional
+    }
+
+    const data = pickShareData({
+      title: 'Bonsai-en',
+      text: url ? shareDraftText() : shareDraftWithUrl(null),
+      url,
+      file,
+    });
+    const payload =
+      data ??
+      (file
+        ? pickShareData({
+            title: 'Bonsai-en',
+            text: shareDraftText(),
+            file,
+          })
+        : null);
+
+    if (!payload) {
+      if (built.ok) {
+        await this.shareCopyLink();
+        this.setStatus('Share sheet unavailable — link copied instead');
+        return;
+      }
+      this.setStatus('Nothing to share — try Save image');
+      return;
+    }
+
+    const result = await systemShare(payload);
+    if (result === 'shared') {
+      this.setStatus('Shared');
+      this.closeSharePanel();
+    } else if (result === 'cancelled') {
+      this.setStatus('Share cancelled');
+    } else if (result === 'unavailable') {
+      this.setStatus('System share unavailable — use Copy link');
+    } else {
+      this.setStatus('Share failed — try Copy link or Save image');
+    }
+  }
+
+  private async shareToX(): Promise<void> {
+    const built = buildShareUrl(this.tree);
+    const url = built.ok ? built.url : null;
+    let imageSaved = false;
+    try {
+      const blob = await this.captureSharePortrait();
+      if (blob) {
+        downloadBlob(blob, portraitFilename(this.tree.speciesId));
+        imageSaved = true;
+      }
+    } catch {
+      // continue without image
+    }
+
+    const intent = xIntentUrl({
+      text: shareDraftText(),
+      url,
+    });
+    window.open(intent, '_blank', 'noopener,noreferrer');
+
+    if (imageSaved && url) {
+      this.setStatus('Image saved — attach it in the X window');
+    } else if (imageSaved) {
+      this.setStatus(
+        'Image saved — attach in X (tree too large for a share link)',
+      );
+    } else if (url) {
+      this.setStatus('Opened X draft with your link');
+    } else {
+      this.setStatus('Opened X draft — tree too large for a link');
+    }
+  }
+
+  private async shareSaveImage(): Promise<void> {
+    try {
+      const blob = await this.captureSharePortrait();
+      if (!blob) {
+        this.setStatus('Could not capture image');
+        return;
+      }
+      downloadBlob(blob, portraitFilename(this.tree.speciesId));
+      this.setStatus('Portrait saved');
+    } catch (e) {
+      this.setStatus(`Image failed: ${(e as Error).message}`);
+    }
+  }
+
+  /**
+   * One-frame clean portrait: hide HUD + sumi ghost + selection, freeze physics,
+   * render, capture PNG, restore.
+   */
+  private async captureSharePortrait(): Promise<Blob | null> {
+    const sumiOn = this.scene.sumi.isEnabled();
+    const selected = this.selected;
+    const hover = this.hoverId;
+    const wasFrozen = this.physics.frozen;
+
+    document.body.classList.add('screenshot-hide-ui');
+    const backdrop = document.getElementById('share-backdrop');
+    const wasOpen = backdrop ? !backdrop.hidden : false;
+    if (backdrop) backdrop.hidden = true;
+
+    this.scene.sumi.setEnabled(false);
+    this.scene.setSelected(null);
+    this.clearPruneHover();
+    freezePhysics(this.physics, true);
+
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+
+    let blob: Blob | null = null;
+    try {
+      blob = await this.scene.captureStillPng();
+    } finally {
+      freezePhysics(this.physics, wasFrozen);
+      this.scene.sumi.setEnabled(sumiOn);
+      this.scene.setSelected(selected);
+      if (hover) this.setPruneHover(hover);
+      document.body.classList.remove('screenshot-hide-ui');
+      if (backdrop && wasOpen) backdrop.hidden = false;
+    }
+    return blob;
   }
 
   private bindPointer(canvas: HTMLCanvasElement): void {

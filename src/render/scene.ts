@@ -913,6 +913,36 @@ export class BonsaiScene {
     this.renderer.render(this.scene, this.camera);
   }
 
+  /**
+   * Capture the current WebGL frame as a PNG blob (for share / social).
+   * Call after hiding HUD chrome so the portrait is tree-only.
+   * Reads the canvas immediately after a forced render (no preserveDrawingBuffer).
+   */
+  captureStillPng(): Promise<Blob | null> {
+    this.render(true);
+    const canvas = this.renderer.domElement;
+    return new Promise((resolve) => {
+      try {
+        if (typeof canvas.toBlob === 'function') {
+          canvas.toBlob((blob) => resolve(blob), 'image/png');
+          return;
+        }
+        const dataUrl = canvas.toDataURL('image/png');
+        const comma = dataUrl.indexOf(',');
+        if (comma < 0) {
+          resolve(null);
+          return;
+        }
+        const bin = atob(dataUrl.slice(comma + 1));
+        const bytes = new Uint8Array(bin.length);
+        for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+        resolve(new Blob([bytes], { type: 'image/png' }));
+      } catch {
+        resolve(null);
+      }
+    });
+  }
+
   /** Product-GPU DOF toggle for A/B (`?dof=0` / harness). No-op on soft GL. */
   setDofEnabled(on: boolean): void {
     this.dofWanted = on;

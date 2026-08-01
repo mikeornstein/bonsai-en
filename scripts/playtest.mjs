@@ -525,35 +525,63 @@ await scenario(page, 'S10', 'Share hash', false, async () => {
     throw new Error(`Bad share hash: ${hash}`);
   }
   const s = await snap(page);
-  // UI path
+  // UI path: open share panel → Copy link
   await page.click('#btn-files');
   await sleep(200);
   await page.click('#btn-share');
+  await sleep(300);
+  const panelOpen = await page.evaluate(
+    () => !document.getElementById('share-backdrop')?.hidden,
+  );
+  if (!panelOpen) {
+    throw new Error('Share panel did not open');
+  }
+  const copyDisabled = await page.evaluate(
+    () => document.getElementById('share-copy')?.disabled === true,
+  );
+  await page.click('#share-copy');
   await sleep(400);
   const status = await page.evaluate(
     () => document.getElementById('status')?.textContent?.trim(),
   );
-  // copyShareLink refuses URLs > MAX_SHARE_URL_LENGTH (24k; hash not sent to server)
-  const MAX_SHARE_URL_LENGTH = 24_000;
+  // buildShareUrl refuses URLs > MAX_SHARE_URL_LENGTH (32k; hash not sent to server)
+  const MAX_SHARE_URL_LENGTH = 32_000;
   const fullUrlApprox = 80 + hash.length;
   if (fullUrlApprox > MAX_SHARE_URL_LENGTH) {
-    addFinding(
-      'playability',
-      'Share link falls back to file download early',
-      `At ~${s.nodeCount} nodes, hash length=${hash.length} (URL ≳${fullUrlApprox} > ${MAX_SHARE_URL_LENGTH}).`,
-      'S10',
-    );
-  }
-  // Soft note if status still shows fallback despite smaller hash (clipboard etc.)
-  if (status && /too large for a share link/i.test(status) && fullUrlApprox <= MAX_SHARE_URL_LENGTH) {
+    if (!copyDisabled) {
+      addFinding(
+        'playability',
+        'Share Copy link enabled despite URL over budget',
+        `At ~${s.nodeCount} nodes, hash length=${hash.length} (URL ≳${fullUrlApprox} > ${MAX_SHARE_URL_LENGTH}).`,
+        'S10',
+      );
+    }
+  } else if (status && /too large for a share link/i.test(status)) {
     addFinding(
       'playability',
       'Share reported too-large despite URL under limit',
       `status="${status}", url≈${fullUrlApprox}`,
       'S10',
     );
+  } else if (
+    status &&
+    !/link copied|clipboard blocked|too large/i.test(status)
+  ) {
+    addFinding(
+      'playability',
+      'Share Copy link status unexpected',
+      `status="${status}"`,
+      'S10',
+    );
   }
-  return [`hashLen=${hash.length}, status="${status}", nodes=${s.nodeCount}`];
+  // Close panel for subsequent scenarios
+  await page.evaluate(() => {
+    const b = document.getElementById('share-backdrop');
+    if (b) b.hidden = true;
+  });
+  return [
+    `hashLen=${hash.length}, status="${status}", panel=open, copyDisabled=${copyDisabled}, nodes=${s.nodeCount}`,
+  ];
 });
 
 // ── S11 Export JSON ────────────────────────────────────────────────────────
