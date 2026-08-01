@@ -10,6 +10,8 @@ import {
   createFoliageTipMaterial,
   createHighlightMaterial,
   createHighlightRimMaterial,
+  createHoverHighlightMaterial,
+  createHoverHighlightRimMaterial,
   createWireMaterial,
 } from './materials';
 import { POT_SOIL_LOCAL_Y } from './pot';
@@ -111,6 +113,8 @@ export class TreeRenderer {
   private wireMat: THREE.MeshPhysicalMaterial | null = null;
   private highlightMat: THREE.MeshBasicMaterial | null = null;
   private highlightRimMat: THREE.MeshBasicMaterial | null = null;
+  private hoverMat: THREE.MeshBasicMaterial | null = null;
+  private hoverRimMat: THREE.MeshBasicMaterial | null = null;
   private coachMat: THREE.MeshBasicMaterial | null = null;
   private coachRimMat: THREE.MeshBasicMaterial | null = null;
   private branchGroup = new THREE.Group();
@@ -118,6 +122,9 @@ export class TreeRenderer {
   private wireGroup = new THREE.Group();
   private highlightMesh: THREE.Mesh | null = null;
   private highlightRim: THREE.Mesh | null = null;
+  /** Prune-intent hover preview (#81), softer than selection. */
+  private hoverMesh: THREE.Mesh | null = null;
+  private hoverRim: THREE.Mesh | null = null;
   /** Practice overflow coach tips (warm ink), distinct from selection. */
   private coachMeshes: Array<{
     id: NodeId;
@@ -125,6 +132,8 @@ export class TreeRenderer {
     rim: THREE.Mesh;
   }> = [];
   private selectedId: NodeId | null = null;
+  /** Hover preview target (prune tool); independent of selection. */
+  private hoverId: NodeId | null = null;
   private coachIds: NodeId[] = [];
   private scaleGeo: THREE.BufferGeometry | null = null;
   /** Branch cylinder tessellation — 10 is enough for bonsai scale (#34 rebuild cost). */
@@ -238,6 +247,8 @@ export class TreeRenderer {
     if (!this.wireMat) this.wireMat = createWireMaterial();
     if (!this.highlightMat) this.highlightMat = createHighlightMaterial();
     if (!this.highlightRimMat) this.highlightRimMat = createHighlightRimMaterial();
+    if (!this.hoverMat) this.hoverMat = createHoverHighlightMaterial();
+    if (!this.hoverRimMat) this.hoverRimMat = createHoverHighlightRimMaterial();
     if (!this.coachMat) this.coachMat = createCoachHighlightMaterial();
     if (!this.coachRimMat) this.coachRimMat = createCoachHighlightRimMaterial();
     if (!this.scarMat) {
@@ -260,6 +271,82 @@ export class TreeRenderer {
 
   setSelected(id: NodeId | null): void {
     this.selectedId = id;
+  }
+
+  /**
+   * Prune-intent hover target. Does not rebuild meshes — call
+   * {@link syncHoverHighlight} (or a structural rebuild) to show geometry.
+   */
+  setHover(id: NodeId | null): void {
+    this.hoverId = id;
+  }
+
+  getHover(): NodeId | null {
+    return this.hoverId;
+  }
+
+  /**
+   * Create/clear hover preview meshes without a full tree rebuild (#81).
+   * Pass `null` tree to clear only. Skips mesh when hover equals selection.
+   */
+  syncHoverHighlight(
+    tree: TreeState | null,
+    frames?: Map<NodeId, NodeWorld>,
+  ): void {
+    this.ensureMaterials();
+    this.clearHoverMeshes();
+    if (!tree || !frames) return;
+    this.buildHoverMeshes(tree, frames);
+  }
+
+  private clearHoverMeshes(): void {
+    if (this.hoverMesh) {
+      this.group.remove(this.hoverMesh);
+      this.hoverMesh.geometry.dispose();
+      this.hoverMesh = null;
+    }
+    if (this.hoverRim) {
+      this.group.remove(this.hoverRim);
+      this.hoverRim.geometry.dispose();
+      this.hoverRim = null;
+    }
+  }
+
+  private buildHoverMeshes(
+    tree: TreeState,
+    frames: Map<NodeId, NodeWorld>,
+  ): void {
+    if (!this.hoverId || this.hoverId === this.selectedId) return;
+    const node = tree.nodes[this.hoverId];
+    const frame = frames.get(this.hoverId);
+    // Root / dead / missing — prune cannot apply
+    if (!node || !frame || !node.living || node.parentId === null) return;
+    if (node.length < 1e-6) return;
+
+    const baseR = Math.max(node.radius, MIN_VISUAL_RADIUS);
+    // Slight overscale so thin laterals still read intent wash
+    const r = baseR * 1.28;
+    this.hoverMesh = this.makeTaperedSegment(
+      r,
+      r * 0.88,
+      frame,
+      this.hoverMat!,
+    );
+    this.hoverMesh.userData.nodeId = this.hoverId;
+    this.hoverMesh.userData.hover = true;
+    this.hoverMesh.renderOrder = 2;
+    this.group.add(this.hoverMesh);
+    const rimR = baseR * 1.46;
+    this.hoverRim = this.makeTaperedSegment(
+      rimR,
+      rimR * 0.9,
+      frame,
+      this.hoverRimMat!,
+    );
+    this.hoverRim.userData.nodeId = this.hoverId;
+    this.hoverRim.userData.hover = true;
+    this.hoverRim.renderOrder = 1;
+    this.group.add(this.hoverRim);
   }
 
   /**
@@ -317,6 +404,7 @@ export class TreeRenderer {
       this.highlightRim.geometry.dispose();
       this.highlightRim = null;
     }
+    this.clearHoverMeshes();
     this.clearCoachMeshes();
 
     const live = frames ?? computeWorldFrames(tree);
@@ -394,9 +482,13 @@ export class TreeRenderer {
       }
     }
 
+    // Prune hover preview (softer than selection; skip if selected)
+    this.buildHoverMeshes(tree, live);
+
     // Coach overflow tips — warm ink, skip if same as primary selection
     for (const id of this.coachIds) {
       if (id === this.selectedId) continue;
+      if (id === this.hoverId) continue;
       const node = tree.nodes[id];
       const frame = live.get(id);
       if (!node || !frame || !node.living) continue;
@@ -478,6 +570,13 @@ export class TreeRenderer {
       if (frame) {
         if (this.highlightMesh) this.placeSegment(this.highlightMesh, frame);
         if (this.highlightRim) this.placeSegment(this.highlightRim, frame);
+      }
+    }
+    if (this.hoverId) {
+      const frame = frames.get(this.hoverId);
+      if (frame) {
+        if (this.hoverMesh) this.placeSegment(this.hoverMesh, frame);
+        if (this.hoverRim) this.placeSegment(this.hoverRim, frame);
       }
     }
     for (const c of this.coachMeshes) {
@@ -1238,6 +1337,8 @@ export class TreeRenderer {
     if (this.wireMat) sharedMats.add(this.wireMat);
     if (this.highlightMat) sharedMats.add(this.highlightMat);
     if (this.highlightRimMat) sharedMats.add(this.highlightRimMat);
+    if (this.hoverMat) sharedMats.add(this.hoverMat);
+    if (this.hoverRimMat) sharedMats.add(this.hoverRimMat);
     if (this.coachMat) sharedMats.add(this.coachMat);
     if (this.coachRimMat) sharedMats.add(this.coachRimMat);
     if (this.scarMat) sharedMats.add(this.scarMat);
@@ -1272,11 +1373,14 @@ export class TreeRenderer {
     this.wireMat?.dispose();
     this.highlightMat?.dispose();
     this.highlightRimMat?.dispose();
+    this.hoverMat?.dispose();
+    this.hoverRimMat?.dispose();
     this.coachMat?.dispose();
     this.coachRimMat?.dispose();
     this.scarMat?.dispose();
     this.budMat?.dispose();
     this.pickMat?.dispose();
+    this.clearHoverMeshes();
     this.clearCoachMeshes();
     this.clearGroup(this.scarGroup);
     this.clearGroup(this.budGroup);

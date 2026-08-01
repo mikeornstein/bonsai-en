@@ -527,6 +527,31 @@ export class BonsaiScene {
   }
 
   /**
+   * Prune-intent hover preview (#81). Updates hover meshes in place when
+   * `tree` is provided — avoids a full structural rebuild on pointermove.
+   * `id === null` clears immediately. Without tree, stores id for next rebuild.
+   */
+  setHover(
+    id: NodeId | null,
+    tree?: TreeState | null,
+    frames?: Map<NodeId, NodeWorld>,
+  ): void {
+    if (this.treeRenderer.getHover() === id) return;
+    this.treeRenderer.setHover(id);
+    if (id === null) {
+      this.treeRenderer.syncHoverHighlight(null);
+      return;
+    }
+    if (tree) {
+      const live = frames ?? computeWorldFrames(tree);
+      this.treeRenderer.syncHoverHighlight(tree, live);
+      return;
+    }
+    // Id set without tree — show on next structural rebuild
+    this.dirty = true;
+  }
+
+  /**
    * Practice coach overflow tip highlights (warm ink).
    * Empty array clears. Marks dirty when the set actually changes.
    */
