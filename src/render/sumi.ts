@@ -12,6 +12,8 @@ import * as THREE from 'three';
 import { PEDESTAL_HEIGHT, POT_SOIL_LOCAL_Y } from './pot';
 import { PRACTICE_STEM, practiceTargetPolygon } from '../sim/practice/target';
 import type { PracticeScore } from '../sim/practice/score';
+import type { PracticeMilestoneKind } from '../sim/practice/milestones';
+import { PRACTICE_MILESTONE_COPY } from '../sim/practice/milestones';
 
 /** Warm sumi ink — slightly cooler than pure black so it sits in the cyclorama. */
 const INK = new THREE.Color('#242220');
@@ -29,6 +31,9 @@ export class SumiChallenge {
   private fill: THREE.Mesh | null = null;
   private stemLine: THREE.Line | null = null;
   private lastGrade: PracticeScore['grade'] | null = null;
+  /** Timestamp (ms) until which milestone pulse opacities hold. */
+  private pulseUntil = 0;
+  private pulseKind: PracticeMilestoneKind | null = null;
 
   constructor() {
     this.group.name = 'sumiChallenge';
@@ -39,6 +44,11 @@ export class SumiChallenge {
     this.enabled = on;
     this.group.visible = on;
     if (on && !this.line) this.buildGhost();
+    if (!on) {
+      this.pulseUntil = 0;
+      this.pulseKind = null;
+      this.lastGrade = null;
+    }
   }
 
   isEnabled(): boolean {
@@ -48,18 +58,56 @@ export class SumiChallenge {
   /**
    * Soft visual feedback from quantitative score (opacity nudge by grade).
    * Does not alter the target geometry. Keeps ink secondary to the tree.
+   * Milestone pulse briefly elevates ink, then settles to grade levels.
    */
   applyScoreFeedback(score: PracticeScore): void {
     if (!this.enabled || !this.line || !this.fill) return;
+    const now = performance.now();
+    if (now < this.pulseUntil && this.pulseKind) {
+      this.applyPulseOpacities(this.pulseKind);
+      return;
+    }
+    if (this.pulseKind && now >= this.pulseUntil) {
+      this.pulseKind = null;
+      // Force grade re-apply after pulse ends
+      this.lastGrade = null;
+    }
     if (this.lastGrade === score.grade) return;
     this.lastGrade = score.grade;
+    this.applyGradeOpacities(score.grade);
+  }
+
+  /**
+   * One soft ink breath when first reaching close / match.
+   * Quiet — slightly brighter ink for ~1.6s, then back to grade opacity.
+   */
+  pulseMilestone(kind: PracticeMilestoneKind): void {
+    if (!this.enabled || !this.line || !this.fill) return;
+    this.pulseKind = kind;
+    this.pulseUntil = performance.now() + 1600;
+    this.applyPulseOpacities(kind);
+  }
+
+  /**
+   * Quiet status copy for a grade milestone (zen room tone).
+   * Prefer `PRACTICE_MILESTONE_COPY` from the pure helper when wiring HUD.
+   */
+  acknowledge(score?: PracticeScore): string {
+    if (score?.grade === 'match') return PRACTICE_MILESTONE_COPY.match;
+    if (score?.grade === 'close') return PRACTICE_MILESTONE_COPY.close;
+    if (score) return score.label;
+    return 'Close enough · rest';
+  }
+
+  private applyGradeOpacities(grade: PracticeScore['grade']): void {
+    if (!this.line || !this.fill) return;
     const lineMat = this.line.material as THREE.LineBasicMaterial;
     const fillMat = this.fill.material as THREE.MeshBasicMaterial;
     const stemMat = this.stemLine
       ? (this.stemLine.material as THREE.LineBasicMaterial)
       : null;
     // Slightly stronger ink as the player approaches the shape — still quiet
-    switch (score.grade) {
+    switch (grade) {
       case 'match':
         lineMat.opacity = 0.32;
         fillMat.opacity = 0.085;
@@ -82,11 +130,23 @@ export class SumiChallenge {
     }
   }
 
-  /** Quiet acknowledgment when canopy roughly matches. */
-  acknowledge(score?: PracticeScore): string {
-    if (score && score.grade === 'match') return score.label;
-    if (score) return score.label;
-    return 'Close enough · rest';
+  private applyPulseOpacities(kind: PracticeMilestoneKind): void {
+    if (!this.line || !this.fill) return;
+    const lineMat = this.line.material as THREE.LineBasicMaterial;
+    const fillMat = this.fill.material as THREE.MeshBasicMaterial;
+    const stemMat = this.stemLine
+      ? (this.stemLine.material as THREE.LineBasicMaterial)
+      : null;
+    // Soft breath only — still secondary to living wood
+    if (kind === 'match') {
+      lineMat.opacity = 0.4;
+      fillMat.opacity = 0.11;
+      if (stemMat) stemMat.opacity = 0.48;
+    } else {
+      lineMat.opacity = 0.34;
+      fillMat.opacity = 0.09;
+      if (stemMat) stemMat.opacity = 0.42;
+    }
   }
 
   private buildGhost(): void {
