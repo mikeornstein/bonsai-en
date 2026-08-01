@@ -26,6 +26,7 @@
 | Preference | Survives reload; share/import keep last user mode |
 | First-run hint | “Match the ink · prune outside · wire the trunk · grow into the pad” |
 | Harness | `setFrontLock(bool)`, `isFrontLock()`, `snapToFrontFace()`; ortho `setView('front')` unchanged |
+| Path checklist (#70) | Quiet collapsible **Path** steps in Practice only (hidden in Free train). Advisory — no tool locks. Tap step → status hint. Soft checks from orbit / prune / trunk wire / set / Season·Mo / Still. |
 
 **Art grounding (#53):** stem S-curve and cloud envelope are tuned from CC moyogi diagrams/photos plus original ink plates (not a freehand diamond). Ink hierarchy is stem > outline > fill so the ghost stays quiet against living wood.
 

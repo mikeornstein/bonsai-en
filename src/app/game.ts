@@ -46,6 +46,16 @@ import {
   type PracticeMilestoneState,
 } from '../sim/practice/milestones';
 import {
+  CHECKLIST_STEPS,
+  checklistDoneCount,
+  checklistHint,
+  evaluateChecklistProgress,
+  mergeChecklistDone,
+  treeWireSignals,
+  type ChecklistDone,
+  type ChecklistStepId,
+} from '../sim/practice/checklist';
+import {
   computeLiveWorldFrames,
   createPhysicsWorld,
   freezePhysics,
@@ -172,10 +182,26 @@ export class Game {
   private structuralHistory = new StructuralHistory();
   /** Last Practice+Inspect overflow ranking (for status / prune preselect). */
   private coachRanked: OverflowRanked[] = [];
+  /** Session soft-progress for optional shokunin checklist. */
+  private hasPrunedSession = false;
+  private usedSeasonPaceSession = false;
+  private hasPausedSession = false;
+  /** Manual checklist overrides (advisory; does not lock tools). */
+  private checklistOverride = new Map<ChecklistStepId, boolean>();
+  private checklistEl: HTMLDetailsElement | null = null;
+  private checklistListEl: HTMLElement | null = null;
+  private checklistCountEl: HTMLElement | null = null;
+  private lastChecklistDone: ChecklistDone | null = null;
+  private checklistCollapsedForProgress = false;
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
     this.hintEl = document.getElementById('hint')!;
+    this.checklistEl = document.getElementById(
+      'checklist',
+    ) as HTMLDetailsElement | null;
+    this.checklistListEl = document.getElementById('checklist-list');
+    this.checklistCountEl = document.getElementById('checklist-count');
     // Scene first (WebGL + meshes). UI binds even if later tree work is slow.
     this.scene = new BonsaiScene(canvas);
     this.bindUi();
@@ -382,6 +408,8 @@ export class Game {
     }
     this.syncPracticeButton(on);
     this.syncFrontLockButton(on);
+    this.syncChecklistVisibility(on);
+    if (on) this.refreshChecklist();
     if (persist) writePlayMode(on ? 'practice' : 'sandbox');
     // Coach overflow tips only in Practice; clear in Free train
     this.updateCoachHighlights();
@@ -478,6 +506,7 @@ export class Game {
     this.syncPracticeButton(on);
     this.setPracticeMetaVisible(on);
     this.syncFrontLockButton(on);
+    this.syncChecklistVisibility(on);
     if (!on) {
       this.updateCoachHighlights();
       this.syncPracticeBestMeta(false);
@@ -498,6 +527,125 @@ export class Game {
     this.hintEl.style.opacity = '0.85';
     // Default tool is Inspect — show overflow coach when practice is on
     this.updateCoachHighlights();
+    this.refreshChecklist();
+  }
+
+  /** Practice: show quiet path checklist. Free train: hide entirely. */
+  private syncChecklistVisibility(practiceOn: boolean): void {
+    if (!this.checklistEl) return;
+    this.checklistEl.hidden = !practiceOn;
+    if (!practiceOn) {
+      this.checklistEl.open = false;
+      return;
+    }
+    // Mobile: start collapsed so HUD stays light
+    if (typeof window !== 'undefined' && window.matchMedia('(max-width: 719px)').matches) {
+      this.checklistEl.open = false;
+    } else if (!this.checklistCollapsedForProgress) {
+      this.checklistEl.open = true;
+    }
+  }
+
+  private buildChecklistDom(): void {
+    const list = this.checklistListEl;
+    if (!list || list.childElementCount > 0) return;
+    for (const step of CHECKLIST_STEPS) {
+      const li = document.createElement('li');
+      li.className = 'checklist-row';
+      li.dataset.step = step.id;
+
+      const mark = document.createElement('button');
+      mark.type = 'button';
+      mark.className = 'checklist-mark';
+      mark.title = 'Mark done (advisory)';
+      mark.setAttribute('aria-label', `Toggle ${step.label}`);
+      mark.addEventListener('click', (e) => {
+        e.preventDefault();
+        e.stopPropagation();
+        this.toggleChecklistStep(step.id);
+      });
+
+      const btn = document.createElement('button');
+      btn.type = 'button';
+      btn.className = 'checklist-item';
+      btn.textContent = step.label;
+      btn.title = step.hint;
+      btn.addEventListener('click', (e) => {
+        e.preventDefault();
+        this.setStatus(checklistHint(step.id));
+      });
+
+      li.appendChild(mark);
+      li.appendChild(btn);
+      list.appendChild(li);
+    }
+  }
+
+  private toggleChecklistStep(id: ChecklistStepId): void {
+    const done = this.computeChecklistDone();
+    const next = !done[id];
+    this.checklistOverride.set(id, next);
+    this.setStatus(checklistHint(id));
+    this.refreshChecklist();
+  }
+
+  private computeChecklistDone(practiceScore?: number): ChecklistDone {
+    const wire = treeWireSignals(this.tree);
+    const score =
+      practiceScore ??
+      (this.scene.sumi.isEnabled() ? this.getPracticeScore().score : 0);
+    const auto = evaluateChecklistProgress({
+      cameraOwned: this.scene.isCameraUserOwned(),
+      hasPruned: this.hasPrunedSession,
+      hasTrunkWire: wire.hasTrunkWire,
+      maxWireSet: wire.maxWireSet,
+      usedSeasonPace: this.usedSeasonPaceSession,
+      hasPaused: this.hasPausedSession,
+      practiceScore: score,
+    });
+    return mergeChecklistDone(auto, this.checklistOverride);
+  }
+
+  private refreshChecklist(practiceScore?: number): void {
+    if (!this.checklistEl || this.checklistEl.hidden) return;
+    this.buildChecklistDom();
+    const done = this.computeChecklistDone(practiceScore);
+    const count = checklistDoneCount(done);
+    if (this.checklistCountEl) {
+      this.checklistCountEl.textContent =
+        count > 0 ? `${count}/${CHECKLIST_STEPS.length}` : '';
+    }
+    this.checklistListEl
+      ?.querySelectorAll<HTMLElement>('.checklist-row')
+      .forEach((row) => {
+        const id = row.dataset.step as ChecklistStepId | undefined;
+        if (!id) return;
+        row.classList.toggle('done', Boolean(done[id]));
+      });
+
+    // Soft collapse once several steps land (especially mobile) — advisory only
+    const prev = this.lastChecklistDone
+      ? checklistDoneCount(this.lastChecklistDone)
+      : 0;
+    this.lastChecklistDone = done;
+    if (count >= 3 && count > prev) {
+      const mobile =
+        typeof window !== 'undefined' &&
+        window.matchMedia('(max-width: 719px)').matches;
+      if (mobile || count >= CHECKLIST_STEPS.length) {
+        this.checklistEl.open = false;
+        this.checklistCollapsedForProgress = true;
+      }
+    }
+  }
+
+  private resetChecklistSession(): void {
+    this.hasPrunedSession = false;
+    this.usedSeasonPaceSession = false;
+    this.hasPausedSession = false;
+    this.checklistOverride.clear();
+    this.lastChecklistDone = null;
+    this.checklistCollapsedForProgress = false;
   }
 
   /** Persist current tree via the same path as the Save menu item. */
@@ -550,12 +698,14 @@ export class Game {
       const r = pruneAt(this.tree, nodeId);
       this.setStatus(r.message);
       if (r.ok) {
+        this.hasPrunedSession = true;
         this.selected = null;
         this.scene.setSelected(null);
         this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('prune');
         this.updateCoachHighlights();
+        if (this.scene.sumi.isEnabled()) this.refreshChecklist();
       } else {
         this.structuralHistory.discardLast();
       }
@@ -684,6 +834,7 @@ export class Game {
     resetPracticeMilestones(this.practiceMilestones);
     this.milestoneHoldUntil = 0;
     this.lastPracticeLabel = '';
+    this.resetChecklistSession();
     this.setStatus('New juniper sapling');
     this.updateCoachHighlights();
     this.refreshHud();
@@ -692,8 +843,11 @@ export class Game {
       seedPracticeScore(this.practiceMilestones, s.score);
       this.scene.sumi.applyScoreFeedback(s);
       this.syncPracticeBestMeta(true);
+      this.syncChecklistVisibility(true);
+      this.refreshChecklist();
     } else {
       this.syncPracticeBestMeta(false);
+      this.syncChecklistVisibility(false);
     }
   }
 
@@ -1147,6 +1301,19 @@ export class Game {
       const mode = raw === '0' ? 'pause' : raw;
       btn.classList.toggle('active', mode === speed);
     });
+    // Checklist soft signals: Season/Mo for pads; Still for rest
+    if (speed === 'week' || speed === 'month') {
+      this.usedSeasonPaceSession = true;
+    }
+    if (speed === 'pause') {
+      this.hasPausedSession = true;
+    }
+    if (
+      this.scene.sumi.isEnabled() &&
+      (speed === 'week' || speed === 'month' || speed === 'pause')
+    ) {
+      this.refreshChecklist();
+    }
     // Leaving pure growth FF: rebind + wake so canopy re-settles with new mass.
     const wasFF = prev === 'year' || prev === 'month';
     const nowFF = speed === 'year' || speed === 'month';
@@ -1364,6 +1531,8 @@ export class Game {
           this.updateCoachHighlights();
           this.refreshHud();
         }
+        // Soft checklist progress (camera / wire set / score)
+        this.refreshChecklist();
         // Off-axis note when unlocked: score is still front-plane only (#66)
         this.refreshFrontAxisHint();
       }
