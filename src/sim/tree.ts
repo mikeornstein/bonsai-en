@@ -134,6 +134,32 @@ export function maxMainStemNodes(stemNodes: number): number {
 }
 
 /**
+ * Initial wood radius for a new shoot.
+ *
+ * - **Terminal** (axis continuation): mild taper from the parent.
+ * - **Axillary** (true branch): near-uniform tip size so a fork off thick trunk
+ *   is not born absurdly fat. Secondary / pipe growth fattens loaded limbs later.
+ *
+ * Previously laterals used `parent.radius * 0.62`, so low trunk forks started
+ * several× thicker than tip forks (#87).
+ */
+export function spawnShootRadius(
+  parentRadius: number,
+  budType: 'terminal' | 'axillary',
+  species: SpeciesDefinition,
+): number {
+  if (budType === 'terminal') {
+    return Math.max(species.minRadius, parentRadius * 0.78);
+  }
+  // ~1.4× tip floor (~0.6 mm for juniper); never thicker than half the parent
+  const tipStart = species.minRadius * 1.4;
+  return Math.max(
+    species.minRadius,
+    Math.min(tipStart, parentRadius * 0.5),
+  );
+}
+
+/**
  * Azimuths already claimed by axillary buds or lateral children on a node.
  * Terminal-like children (near parent axis) are ignored.
  * Pass `excludeBudId` when re-resolving the bud about to flush (avoid self-hit).
@@ -781,13 +807,15 @@ export function createSapling(
     const len =
       randRange(rng, species.internodeLength.min, species.internodeLength.max) *
       randRange(rng, 0.95, 1.25);
+    // Same tip-start rule as growth laterals — not a thick fraction of the trunk
+    const latR = spawnShootRadius(host.radius, 'axillary', species);
     // Extra mid segment restores lateral reach at half internode length (#83)
     const lat = createInternode(
       tree,
       host.id,
       orient,
       len,
-      host.radius * 0.58,
+      latR,
       species,
     );
     lat.ageDays = 20 + rng() * 30;
@@ -968,8 +996,7 @@ export function extendFromBud(
     species.internodeLength.min,
     species.internodeLength.max,
   );
-  // Species tip floor (was hard 0.0008) — allows fine laterals (#58)
-  const radius = Math.max(species.minRadius, parent.radius * 0.62);
+  const radius = spawnShootRadius(parent.radius, bud.type, species);
   const child = createInternode(
     tree,
     parent.id,

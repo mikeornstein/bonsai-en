@@ -18,6 +18,7 @@ import {
   minMainStemLateralDepth,
   offAxisAngle,
   openSectorAzimuth,
+  spawnShootRadius,
   totalFoliageArea,
   unbranchedRunLength,
   wrapAzimuth,
@@ -216,7 +217,7 @@ describe('min branch diameter (#58)', () => {
     const host = Object.values(tree.nodes).find(
       (n) => n.living && n.id !== tree.rootId && n.children.length === 0,
     )!;
-    host.radius = species.minRadius * 1.1; // would yield parent*0.62 < minRadius
+    host.radius = species.minRadius * 1.1;
     host.buds = [
       {
         id: 'test-ax',
@@ -239,6 +240,45 @@ describe('min branch diameter (#58)', () => {
     expect(child).toBeTruthy();
     expect(child!.radius).toBeGreaterThanOrEqual(species.minRadius - 1e-12);
     // Fine enough that the old visual floor would have inflated it
+    expect(child!.radius).toBeLessThan(OLD_VISUAL_FLOOR);
+  });
+
+  it('new laterals start near tip size even on a thick parent (#87)', () => {
+    // Old rule parent*0.62 made trunk forks several× thicker than tip forks
+    const thick = species.saplingRadius; // ~7 mm trunk-ish
+    const thin = species.minRadius * 2;
+    const fromThick = spawnShootRadius(thick, 'axillary', species);
+    const fromThin = spawnShootRadius(thin, 'axillary', species);
+    expect(fromThick).toBeLessThanOrEqual(species.minRadius * 1.4 + 1e-12);
+    expect(fromThick).toBeLessThan(thick * 0.4);
+    // Same tip band whether parent is trunk or twig
+    expect(Math.abs(fromThick - fromThin)).toBeLessThan(species.minRadius * 0.5);
+
+    const tree = createSapling('juniper-procumbens', 58);
+    const host = tree.nodes[tree.rootId];
+    host.radius = thick;
+    host.buds = [
+      {
+        id: 'ax-fat-parent',
+        type: 'axillary',
+        state: 'flushing',
+        t: 0.5,
+        azimuth: 1.0,
+        ageDays: 5,
+        breakForce: 1,
+      },
+    ];
+    // Detach so maxChildren lateral count is free
+    host.children = [];
+    const child = extendFromBud(
+      tree,
+      host.id,
+      host.buds[0],
+      species,
+      createRng(2),
+    );
+    expect(child).toBeTruthy();
+    expect(child!.radius).toBeLessThanOrEqual(species.minRadius * 1.4 + 1e-9);
     expect(child!.radius).toBeLessThan(OLD_VISUAL_FLOOR);
   });
 
