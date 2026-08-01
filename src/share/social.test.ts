@@ -1,10 +1,12 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   canSystemShare,
+  isTreeDeepLink,
   pickShareData,
   portraitFilename,
   shareDraftText,
   shareDraftWithUrl,
+  shareSiteUrl,
   xIntentUrl,
 } from './social';
 
@@ -15,33 +17,54 @@ describe('share draft + X intent', () => {
     expect(t.length).toBeLessThan(120);
     expect(t.toLowerCase()).toContain('juniper');
     expect(t.toLowerCase()).toContain('bonsai-en');
+    expect(t).not.toMatch(/#s=/i);
   });
 
-  it('draft with url stacks cleanly for Messages', () => {
-    const body = shareDraftWithUrl('https://example.com/bonsai-en/#s=abc');
+  it('shareSiteUrl is a short homepage without hash', () => {
+    const site = shareSiteUrl({
+      origin: 'https://mikeornstein.github.io',
+      pathname: '/bonsai-en/',
+    });
+    expect(site).toBe('https://mikeornstein.github.io/bonsai-en/');
+    expect(isTreeDeepLink(site)).toBe(false);
+  });
+
+  it('isTreeDeepLink detects state hashes', () => {
+    expect(isTreeDeepLink('https://x.test/bonsai-en/#s=abc')).toBe(true);
+    expect(isTreeDeepLink('https://x.test/bonsai-en/')).toBe(false);
+  });
+
+  it('draft with short site url stacks cleanly (not for tree hashes)', () => {
+    const body = shareDraftWithUrl('https://example.com/bonsai-en/');
     expect(body).toContain(shareDraftText());
-    expect(body).toContain('https://example.com/bonsai-en/#s=abc');
+    expect(body).toContain('https://example.com/bonsai-en/');
     expect(body.split('\n')).toHaveLength(2);
   });
 
-  it('xIntentUrl builds compose link with text and url', () => {
-    const href = xIntentUrl({
-      text: shareDraftText(),
-      url: 'https://example.com/bonsai-en/#s=xyz',
-    });
+  it('xIntentUrl builds compose with text only by default (no giant url)', () => {
+    const href = xIntentUrl({ text: shareDraftText() });
     expect(href.startsWith('https://x.com/intent/post?')).toBe(true);
     const u = new URL(href);
     expect(u.searchParams.get('text')).toBe(shareDraftText());
-    expect(u.searchParams.get('url')).toBe(
-      'https://example.com/bonsai-en/#s=xyz',
-    );
+    expect(u.searchParams.has('url')).toBe(false);
   });
 
-  it('xIntentUrl omits url param when missing', () => {
-    const href = xIntentUrl({ text: 'hello' });
+  it('xIntentUrl strips tree deep-links even if passed', () => {
+    const href = xIntentUrl({
+      text: shareDraftText(),
+      url: 'https://example.com/bonsai-en/#s=N4Ig…huge…',
+    });
     const u = new URL(href);
-    expect(u.searchParams.get('text')).toBe('hello');
     expect(u.searchParams.has('url')).toBe(false);
+  });
+
+  it('xIntentUrl allows a short non-deep site url', () => {
+    const href = xIntentUrl({
+      text: 'hello',
+      url: 'https://example.com/bonsai-en/',
+    });
+    const u = new URL(href);
+    expect(u.searchParams.get('url')).toBe('https://example.com/bonsai-en/');
   });
 
   it('portraitFilename is a stable png name', () => {
@@ -66,7 +89,7 @@ describe('Web Share capability helpers', () => {
     expect(canSystemShare({ text: 'only' }, nav)).toBe(false);
   });
 
-  it('pickShareData prefers files when canShare allows', () => {
+  it('pickShareData prefers files and omits tree deep-link urls', () => {
     const file = new File(['x'], 't.png', { type: 'image/png' });
     const nav = {
       share: vi.fn(),
@@ -74,15 +97,16 @@ describe('Web Share capability helpers', () => {
     } as unknown as Navigator;
     const data = pickShareData({
       text: 'hi',
-      url: 'https://example.com/',
+      url: 'https://example.com/bonsai-en/#s=abc',
       file,
       nav,
     });
     expect(data?.files?.[0]).toBe(file);
-    expect(data?.url).toBe('https://example.com/');
+    expect(data?.url).toBeUndefined();
+    expect(data?.text).toBe('hi');
   });
 
-  it('pickShareData falls back to url-only when files rejected', () => {
+  it('pickShareData falls back to short site url when files rejected', () => {
     const file = new File(['x'], 't.png', { type: 'image/png' });
     const nav = {
       share: vi.fn(),
@@ -90,12 +114,26 @@ describe('Web Share capability helpers', () => {
     } as unknown as Navigator;
     const data = pickShareData({
       text: 'hi',
-      url: 'https://example.com/',
+      url: 'https://example.com/bonsai-en/',
       file,
       nav,
     });
     expect(data?.files).toBeUndefined();
-    expect(data?.url).toBe('https://example.com/');
+    expect(data?.url).toBe('https://example.com/bonsai-en/');
+  });
+
+  it('pickShareData never attaches a tree deep-link as url fallback', () => {
+    const nav = {
+      share: vi.fn(),
+      canShare: vi.fn((data: ShareData) => Boolean(data.text)),
+    } as unknown as Navigator;
+    const data = pickShareData({
+      text: 'hi',
+      url: 'https://example.com/bonsai-en/#s=huge',
+      nav,
+    });
+    expect(data?.url).toBeUndefined();
+    expect(data?.text).toBe('hi');
   });
 
   it('pickShareData returns null when nothing is shareable', () => {
