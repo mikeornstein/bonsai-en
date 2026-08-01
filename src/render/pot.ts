@@ -104,36 +104,63 @@ function createPotLatheGeometry(): THREE.LatheGeometry {
 }
 
 /**
+ * Pot cavity inner radius at height y (mirrors createThickPotProfile inner wall).
+ * Used so soil + liner seat consistently against the ceramic.
+ */
+function potInnerRadiusAt(y: number): number {
+  const floorY = FOOT_H + WALL + 0.001;
+  const rimY = 0.051;
+  if (y >= rimY) return 0.098 - WALL;
+  const span = rimY - floorY;
+  const t = Math.min(1, Math.max(0, (rimY - y) / span)); // 0 at rim → 1 at floor
+  if (t < 0.08) return 0.098 - WALL - t * 0.02;
+  return Math.max(0.078, outerRadiusAt(1 - t) - WALL);
+}
+
+/**
  * Solid soil plug seating against the pot inner wall.
  * Domed top, closed bottom — not a zero-thickness disc.
+ *
+ * Outer edge climbs slightly toward the rim (soft meniscus) so soil fills
+ * under the lip and does not leave a dark annular “floating ring” of
+ * exposed inner wall / hard silhouette (#85).
  */
 function createSoilGeometry(): THREE.BufferGeometry {
-  // Match inner radius near soil height (outer wall − WALL − seat gap)
-  const R = 0.091;
+  // Fill almost to the inner lip (higher sample → slightly wider cavity)
+  const yEdge = POT_SOIL_LOCAL_Y + 0.0016;
+  const R = potInnerRadiusAt(yEdge) + 0.00015; // slight embed into wall
   const yBottom = FOOT_H + WALL + 0.0015;
   const yTop = POT_SOIL_LOCAL_Y;
-  const dome = 0.0035;
+  const dome = 0.0032;
   const pts: THREE.Vector2[] = [];
   const push = (r: number, y: number) =>
     pts.push(new THREE.Vector2(Math.max(0.0003, r), y));
 
   push(0.0004, yBottom);
-  push(R, yBottom);
-  // Slight draft; soil meets wall near the top
-  push(R * 0.998, yTop - 0.0005);
+  // Draft: narrower at floor, full seat near soil surface
+  const rFloor = Math.min(R * 0.97, potInnerRadiusAt(yBottom) - 0.0005);
+  push(rFloor, yBottom);
+  push(R * 0.992, yTop - 0.003);
+  // Soft fillet up the wall — soil meets ceramic under the rim, not as a disc lip
+  push(R * 0.997, yTop - 0.0008);
+  push(R * 0.9995, yEdge - 0.00035);
+  push(R, yEdge);
 
-  const topSamples = 16;
+  const topSamples = 20;
   for (let i = 0; i <= topSamples; i++) {
     const t = i / topSamples; // 0 edge → 1 center
-    const r = R * 0.998 * (1 - t);
-    const nr = r / (R * 0.998 || 1);
-    const domeY = (1 - nr * nr) * dome;
+    const r = R * (1 - t);
+    const nr = r / (R || 1);
+    // Meniscus: outer ~18% of radius stays near yEdge, then soft dome inward
+    const meniscus = Math.pow(Math.max(0, (nr - 0.82) / 0.18), 1.35);
+    const baseY = yTop + (yEdge - yTop) * meniscus;
+    const domeY = (1 - nr * nr) * dome * (1 - meniscus * 0.85);
     // Small central dimple for nebari
     const dimple = Math.exp(-((nr / 0.16) ** 2)) * 0.0016;
-    push(r, yTop + domeY - dimple);
+    push(r, baseY + domeY - dimple);
   }
 
-  const geo = new THREE.LatheGeometry(pts, 80);
+  const geo = new THREE.LatheGeometry(pts, 96);
   geo.computeVertexNormals();
   return geo;
 }
@@ -302,32 +329,32 @@ export function createPotGroup(): THREE.Group {
   pot.receiveShadow = true;
   group.add(pot);
 
-  // Dark matte inner liner just inside the cavity (unglazed clay read)
+  // Dark matte inner liner just inside the cavity (unglazed clay read).
+  // Must stay fully BELOW the soil surface — a top lip above dirt read as a
+  // floating ring on the soil perimeter (#85).
   {
     const linerPts: THREE.Vector2[] = [];
     const push = (r: number, y: number) =>
       linerPts.push(new THREE.Vector2(Math.max(0.0004, r), y));
-    const inset = 0.0006;
+    const inset = 0.00055;
+    const thick = 0.00135;
     const bottomY = FOOT_H + WALL + 0.0012;
-    const topY = 0.05;
+    // Cap under soil so no annular lip floats above the dirt
+    const topY = POT_SOIL_LOCAL_Y - 0.0024;
     push(0.0005, bottomY);
-    push(0.078 - inset, bottomY);
-    const n = 16;
+    push(potInnerRadiusAt(bottomY) - inset, bottomY);
+    const n = 18;
     for (let i = 0; i <= n; i++) {
       const t = i / n;
       const y = bottomY + t * (topY - bottomY);
-      const u = 1 - t;
-      const r = Math.max(0.076, outerRadiusAt(u) - WALL - inset);
-      push(r, y);
+      push(potInnerRadiusAt(y) - inset, y);
     }
-    push(0.095 - WALL - inset, topY + 0.0004);
-    push(0.094 - WALL - inset * 2, topY);
+    // Thin inward return at top (still under soil), then inner face down
+    push(potInnerRadiusAt(topY) - inset - thick, topY);
     for (let i = n; i >= 0; i--) {
       const t = i / n;
       const y = bottomY + t * (topY - bottomY);
-      const u = 1 - t;
-      const r = Math.max(0.075, outerRadiusAt(u) - WALL - inset * 2.2);
-      push(r, y);
+      push(potInnerRadiusAt(y) - inset - thick, y);
     }
     push(0.0005, bottomY + 0.0003);
     const linerGeo = new THREE.LatheGeometry(linerPts, 64);
