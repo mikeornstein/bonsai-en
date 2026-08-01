@@ -73,6 +73,11 @@ export class BonsaiScene {
    * When set, growth-time auto-fit must not reframe (#60).
    */
   private cameraUserOwned = false;
+  /**
+   * Practice front lock (#66): disable orbit rotate so eyes stay on the
+   * front-plane (x–y) that sumi score uses. Zoom/pan stay available.
+   */
+  private frontLock = false;
   /** Saved play-camera pose so audit views can restore cleanly. */
   private savedPerspPos = new THREE.Vector3(0.34, 0.24, 0.42);
   private savedPerspTarget = new THREE.Vector3(0, PEDESTAL_HEIGHT + 0.12, 0);
@@ -354,6 +359,8 @@ export class BonsaiScene {
       this.controls.target.copy(this.savedPerspTarget);
       this.controls.enabled = this.savedControlsEnabled;
       this.controls.enableDamping = true;
+      // Front lock only affects rotate; keep zoom/pan for framing (#66)
+      this.controls.enableRotate = !this.frontLock;
       this.controls.object = this.perspectiveCamera;
       this.controls.update();
       this.view = 'default';
@@ -636,6 +643,77 @@ export class BonsaiScene {
    */
   releaseCameraOwnership(): void {
     this.cameraUserOwned = false;
+  }
+
+  /**
+   * Soft-snap the **play** camera to the front viewing face (looking along −Z
+   * toward the target). Sumi ghost + practice score are front-plane (x–y);
+   * this keeps eyes aligned without switching to ortho audit `setView('front')`.
+   * No-op while in orthographic / close-up harness views.
+   */
+  snapToFrontFace(): void {
+    if (this.view !== 'default') return;
+
+    const target = this.controls.target;
+    const offset = this.perspectiveCamera.position.clone().sub(target);
+    let dist = offset.length();
+    if (!Number.isFinite(dist) || dist < 0.16) dist = 0.55;
+    dist = clampDot(dist, 0.28, 1.05);
+
+    // Mild elevation so the pot reads product-like, still nearly pure front
+    const elev = 0.32; // radians above horizontal
+    const cosEl = Math.cos(elev);
+    const sinEl = Math.sin(elev);
+    this.perspectiveCamera.position.set(
+      target.x,
+      target.y + sinEl * dist,
+      target.z + cosEl * dist,
+    );
+    this.perspectiveCamera.up.set(0, 1, 0);
+    this.controls.update();
+  }
+
+  /**
+   * When locked (practice), orbit rotate is disabled so accidental drag cannot
+   * desync perception from the front-only score. Zoom + pan remain.
+   * Locking also soft-snaps to front. Harness: `setFrontLock`.
+   */
+  setFrontLock(on: boolean): void {
+    this.frontLock = on;
+    if (this.view === 'default') {
+      this.controls.enableRotate = !on;
+      if (on) this.snapToFrontFace();
+    }
+  }
+
+  isFrontLock(): boolean {
+    return this.frontLock;
+  }
+
+  /**
+   * True when the play camera azimuth is near pure front (+Z → origin).
+   * @param maxYawRad — half-angle tolerance (default ~20°)
+   */
+  isFrontFaceAligned(maxYawRad = 0.35): boolean {
+    if (this.view !== 'default') {
+      // Ortho front / front-low count as aligned; other audits do not
+      return this.view === 'front' || this.view === 'front-low';
+    }
+    const offset = this.perspectiveCamera.position.clone().sub(this.controls.target);
+    // Yaw from +Z (front): 0 when camera sits on the +Z side of the target
+    const yaw = Math.atan2(offset.x, offset.z);
+    return Math.abs(yaw) <= maxYawRad;
+  }
+
+  /**
+   * Restore play orbit after wire-tool steal. Respects front lock (#66)
+   * and leaves ortho audits alone.
+   */
+  restorePlayControls(): void {
+    if (this.view !== 'default') return;
+    this.controls.enabled = true;
+    this.controls.enableDamping = true;
+    this.controls.enableRotate = !this.frontLock;
   }
 
   /**

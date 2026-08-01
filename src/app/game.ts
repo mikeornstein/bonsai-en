@@ -145,6 +145,8 @@ export class Game {
   /** Throttle practice score HUD updates. */
   private practiceHudTimer = 0;
   private lastPracticeLabel = '';
+  /** Last off-axis practice note state (avoid thrashing hint every tick). */
+  private lastFrontOffAxis = false;
   /** Throttle HUD refresh under year/month acceleration. */
   private hudCooldownTimer = 0;
   /**
@@ -183,6 +185,10 @@ export class Game {
         this.scene.syncTree(this.tree, computeLiveWorldFrames(this.tree, this.physics));
         // Boot: always frame once; subsequent growth respects user orbit/zoom (#60)
         this.scene.frameTree(this.tree, { force: true });
+        // Practice default: soft-snap to front viewing face so ink + score agree (#66)
+        if (this.scene.sumi.isEnabled() && this.scene.isPlayView()) {
+          this.scene.snapToFrontFace();
+        }
       } catch (err) {
         console.error('[bonsai-en] initial tree sync failed', err);
         this.setStatus(`Tree render failed: ${(err as Error).message}`);
@@ -320,25 +326,68 @@ export class Game {
   /**
    * Practice (sumi guide + live grade) vs Free train / sandbox.
    * Default is practice; preference persists in localStorage `bonsai-en:mode`.
+   * Enabling practice soft-snaps the play camera to the front viewing face (#66).
    */
   setPracticeMode(on: boolean, opts?: { persist?: boolean }): void {
     const persist = opts?.persist !== false;
     this.scene.sumi.setEnabled(on);
     if (on) {
+      // Soft snap so ink, score, and eyes share the front plane
+      if (this.scene.isPlayView()) {
+        this.scene.snapToFrontFace();
+      }
       const s = this.getPracticeScore();
       this.scene.sumi.applyScoreFeedback(s);
       this.updatePracticeMeta(s);
       this.setPracticeMetaVisible(true);
-      // One-shot status on mode enter; ongoing grade lives in meta (#65)
-      this.setStatus(s.label);
+      // Front snap note; ongoing grade lives in meta (#65 / #66)
+      this.setStatus('Viewing face');
       this.lastPracticeLabel = this.formatPracticeMeta(s);
+      this.lastFrontOffAxis = false;
+      this.hintEl.textContent =
+        'Match the ink · prune outside · wire the trunk · grow into the pad';
+      this.hintEl.style.opacity = '0.85';
     } else {
       this.setPracticeMetaVisible(false);
+      // Free train: drop front lock and off-axis notes
+      this.scene.setFrontLock(false);
       this.setStatus('Free train');
       this.lastPracticeLabel = '';
+      this.lastFrontOffAxis = false;
+      this.hintEl.textContent = 'Free train · tools unchanged';
+      this.hintEl.style.opacity = '0.55';
     }
     this.syncPracticeButton(on);
+    this.syncFrontLockButton(on);
     if (persist) writePlayMode(on ? 'practice' : 'sandbox');
+  }
+
+  /**
+   * Optional front lock while scoring (#66). Orbit rotate disabled when on;
+   * re-snaps to front. Free train leaves lock off.
+   */
+  setFrontLock(on: boolean): void {
+    if (!this.scene.sumi.isEnabled()) {
+      // Lock is practice-only — ignore while sandbox
+      this.scene.setFrontLock(false);
+      this.syncFrontLockButton(false);
+      return;
+    }
+    this.scene.setFrontLock(on);
+    this.syncFrontLockButton(true);
+    if (on) {
+      this.setStatus('Front locked · score matches view');
+      this.lastFrontOffAxis = false;
+      this.hintEl.textContent =
+        'Front locked · zoom ok · unlock in ⋯ to orbit';
+      this.hintEl.style.opacity = '0.75';
+    } else {
+      this.setStatus('Orbit free · score is front silhouette');
+    }
+  }
+
+  isFrontLock(): boolean {
+    return this.scene.isFrontLock();
   }
 
   /** Menu label: when practice is on, offer Free train; when off, offer Practice. */
@@ -351,15 +400,59 @@ export class Game {
       : 'Sumi silhouette guide + live grade';
   }
 
+  /** Show Lock front only in Practice; label reflects current lock state. */
+  private syncFrontLockButton(practiceOn: boolean): void {
+    const btn = document.getElementById('btn-front-lock');
+    if (!btn) return;
+    btn.hidden = !practiceOn;
+    if (!practiceOn) return;
+    const locked = this.scene.isFrontLock();
+    btn.textContent = locked ? 'Unlock front' : 'Lock front';
+    btn.title = locked
+      ? 'Allow free orbit (score stays front-plane only)'
+      : 'Keep camera on the viewing face while scoring';
+  }
+
+  /**
+   * Quiet hint when Practice is on, camera is off the front face, and front
+   * is not locked — so score vs eyes mismatch is labeled, not silent.
+   */
+  private refreshFrontAxisHint(): void {
+    if (!this.scene.sumi.isEnabled()) return;
+    if (this.scene.isFrontLock()) {
+      if (this.lastFrontOffAxis) {
+        this.lastFrontOffAxis = false;
+        this.hintEl.textContent =
+          'Front locked · zoom ok · unlock in ⋯ to orbit';
+        this.hintEl.style.opacity = '0.75';
+      }
+      return;
+    }
+    const offAxis = !this.scene.isFrontFaceAligned();
+    if (offAxis === this.lastFrontOffAxis) return;
+    this.lastFrontOffAxis = offAxis;
+    if (offAxis) {
+      this.hintEl.textContent =
+        'Score is front silhouette · Lock front in ⋯';
+      this.hintEl.style.opacity = '0.8';
+    } else {
+      this.hintEl.textContent =
+        'Match the ink · prune outside · wire the trunk · grow into the pad';
+      this.hintEl.style.opacity = '0.85';
+    }
+  }
+
   /**
    * Apply stored mode at boot (default practice). Does not clobber bootstrap
    * status lines (shared tree / autosave / recovery).
+   * Front snap runs after first frameTree (see constructor rAF).
    */
   private applyBootPracticeMode(): void {
     const on = readPlayMode() === 'practice';
     this.scene.sumi.setEnabled(on);
     this.syncPracticeButton(on);
     this.setPracticeMetaVisible(on);
+    this.syncFrontLockButton(on);
     if (!on) return;
     const s = this.getPracticeScore();
     this.scene.sumi.applyScoreFeedback(s);
@@ -704,6 +797,11 @@ export class Game {
       this.setPracticeMode(!this.scene.sumi.isEnabled());
     });
 
+    document.getElementById('btn-front-lock')?.addEventListener('click', () => {
+      closeFiles();
+      this.setFrontLock(!this.scene.isFrontLock());
+    });
+
     window.addEventListener('keydown', (e) => {
       if (e.target instanceof HTMLInputElement) return;
       const key = e.key.toLowerCase();
@@ -836,8 +934,9 @@ export class Game {
       this.wireTarget = null;
 
       // Always restore orbit after a wood-hit gesture under wire tool
+      // (respects practice front lock — rotate may stay disabled)
       if (hadWoodTarget || wasWiring) {
-        this.scene.controls.enabled = true;
+        this.scene.restorePlayControls();
       }
 
       if (wasWiring) {
@@ -1109,6 +1208,8 @@ export class Game {
           this.lastPracticeLabel = meta;
           this.updatePracticeMeta(s);
         }
+        // Off-axis note when unlocked: score is still front-plane only (#66)
+        this.refreshFrontAxisHint();
       }
     }
 

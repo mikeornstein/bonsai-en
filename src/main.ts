@@ -55,6 +55,14 @@ export interface BonsaiHarness {
   isCameraUserOwned(): boolean;
   /** Practice (sumi + grade) on/off. Default on; persists as bonsai-en:mode. */
   setSumiChallenge(on: boolean): void;
+  /**
+   * Practice front lock (#66): disable orbit rotate + snap to viewing face.
+   * No-op / forced off while Free train.
+   */
+  setFrontLock(on: boolean): void;
+  isFrontLock(): boolean;
+  /** Soft-snap play camera to front face (perspective; not ortho audit). */
+  snapToFrontFace(): void;
   setMuted(on: boolean): void;
   getPhysicsTelemetry(): {
     maxOmega: number;
@@ -140,6 +148,15 @@ try {
     setSumiChallenge(on: boolean) {
       // Shared path with menu: updates ghost, status, button, localStorage
       game.setPracticeMode(on);
+    },
+    setFrontLock(on: boolean) {
+      game.setFrontLock(on);
+    },
+    isFrontLock() {
+      return game.isFrontLock();
+    },
+    snapToFrontFace() {
+      game.scene.snapToFrontFace();
     },
     getPracticeScore() {
       return game.getPracticeScore();
