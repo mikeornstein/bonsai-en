@@ -8,11 +8,13 @@ import {
   branchOrder,
   chooseLateralAzimuth,
   collectOccupiedAzimuths,
+  computeWorldFrames,
   countLateralChildren,
   countLivingNodes,
   createSapling,
   extendFromBud,
   isLateralOrientation,
+  maxMainStemNodes,
   minMainStemLateralDepth,
   offAxisAngle,
   openSectorAzimuth,
@@ -398,7 +400,7 @@ describe('branching form (#87)', () => {
     expect(species.budBreakThreshold).toBeLessThanOrEqual(0.5);
   });
 
-  it('places sapling laterals on upper stem, not low trunk', () => {
+  it('places sapling laterals above the low trunk broom zone', () => {
     const tree = createSapling('juniper-procumbens', 42);
     const minDepth = minMainStemLateralDepth(species.saplingStemNodes);
     let lowMain = 0;
@@ -424,6 +426,49 @@ describe('branching form (#87)', () => {
     }
     expect(lowMain).toBe(0);
     expect(upperMain).toBeGreaterThanOrEqual(species.saplingLaterals);
+  });
+
+  it('sapling main stem has character lean, not a pure vertical pole', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    const frames = computeWorldFrames(tree);
+    // Walk near-axis main stem
+    const stem: string[] = [];
+    let cur: string | null = tree.rootId;
+    while (cur && stem.length < 40) {
+      stem.push(cur);
+      const n = tree.nodes[cur];
+      const cont = n.children
+        .map((id) => tree.nodes[id])
+        .find((c) => c?.living && !isLateralOrientation(c.orientation));
+      cur = cont?.id ?? null;
+    }
+    expect(stem.length).toBe(species.saplingStemNodes);
+    const tip = frames.get(stem[stem.length - 1])!;
+    const tipHoriz = Math.hypot(tip.tip[0], tip.tip[2]);
+    const tipY = Math.max(1e-6, tip.tip[1]);
+    // Tip should sit clearly off the vertical axis (was ~0 on pure +Y poles)
+    expect(tipHoriz / tipY).toBeGreaterThan(0.12);
+    // Upper stem should not read as pure +Y
+    expect(tip.dir[1]).toBeLessThan(0.97);
+  });
+
+  it('main stem does not tower with extra vertical internodes under Years FF', () => {
+    const tree = createSapling('juniper-procumbens', 42);
+    const cap = maxMainStemNodes(species.saplingStemNodes);
+    for (let i = 0; i < 12; i++) tickDays(tree, 60, 60);
+
+    let stemNodes = 0;
+    let cur: string | null = tree.rootId;
+    while (cur && stemNodes < 80) {
+      stemNodes += 1;
+      const n = tree.nodes[cur];
+      const cont = n.children
+        .map((id) => tree.nodes[id])
+        .find((c) => c?.living && !isLateralOrientation(c.orientation));
+      cur = cont?.id ?? null;
+    }
+    expect(stemNodes).toBeLessThanOrEqual(cap);
+    expect(stemNodes).toBeGreaterThanOrEqual(species.saplingStemNodes);
   });
 
   it('extendFromBud rejects a second lateral on the same host', () => {

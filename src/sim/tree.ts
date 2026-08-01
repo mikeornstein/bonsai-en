@@ -119,10 +119,18 @@ export function unbranchedRunLength(tree: TreeState, nodeId: NodeId): number {
 
 /**
  * Internodes up the main stem that should not host new laterals.
- * Keeps the lower trunk line open (no broom of early spindly forks).
+ * Keeps the very base clear without leaving a tall bare telephone pole (#87).
  */
 export function minMainStemLateralDepth(stemNodes: number): number {
-  return Math.max(5, Math.floor(stemNodes * 0.4));
+  return Math.max(3, Math.floor(stemNodes * 0.28));
+}
+
+/**
+ * Soft cap on main-stem tip extensions past the sapling scaffold.
+ * Prevents a tower of pure-vertical leader internodes under Years FF (#87).
+ */
+export function maxMainStemNodes(stemNodes: number): number {
+  return stemNodes + 2;
 }
 
 /**
@@ -697,15 +705,26 @@ export function createSapling(
   let radius = species.saplingRadius;
   let parent: Internode | null = null;
 
+  // Character trunk: lean is local-to-parent, so a *steady* axis is required —
+  // random yaw each hop cancels and the world axis stays pure +Y (#87).
+  // Target ~18–28° total lean over the scaffold (readable, not a flop).
+  const leanAxis = vec3(rng() - 0.5, 0, rng() - 0.5);
+  const leanAxisLen = Math.hypot(leanAxis[0], leanAxis[2]) || 1;
+  leanAxis[0] /= leanAxisLen;
+  leanAxis[2] /= leanAxisLen;
+  const totalLean = randRange(rng, 0.32, 0.48);
+  const perSeg = totalLean / Math.max(1, species.saplingStemNodes - 1);
   for (let i = 0; i < species.saplingStemNodes; i++) {
-    const lean = quatFromAxisAngle(
+    // Slightly more lean mid-trunk (S-ish), less at the tip
+    const t = i / Math.max(1, species.saplingStemNodes - 1);
+    const envelope = 0.65 + 0.7 * Math.sin(Math.PI * t);
+    const pitch = perSeg * envelope + randNormal(rng, 0, 0.012);
+    const wobble = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.04, 0.03),
+      randNormal(rng, 0, 0.02),
     );
-    const orient =
-      i === 0
-        ? quatFromAxisAngle(vec3(1, 0, 0), randNormal(rng, 0.08, 0.04))
-        : lean;
+    const lean = quatFromAxisAngle(leanAxis, clamp(pitch, 0.008, 0.12));
+    const orient = quatMultiply(lean, wobble);
     const len = baseLen * randRange(rng, 0.85, 1.15);
     radius = Math.max(species.saplingRadius * 0.45, radius * 0.88);
     const node = createInternode(
@@ -914,9 +933,13 @@ export function extendFromBud(
 
   let orient = quatIdentity();
   if (bud.type === 'terminal') {
+    // Main-stem tips get a real lean so leader flushes aren't pure +Y towers (#87)
+    const order = branchOrder(tree, parent.id);
+    const meanLean = order === 0 ? 0.14 : 0.06;
+    const stdLean = order === 0 ? 0.05 : 0.035;
     orient = quatFromAxisAngle(
       vec3(rng() - 0.5, 0, rng() - 0.5),
-      randNormal(rng, 0.05, 0.04),
+      Math.max(0.04, randNormal(rng, meanLean, stdLean)),
     );
   } else {
     // Re-resolve azimuth against current siblings (children + other buds)

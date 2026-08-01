@@ -10,6 +10,7 @@ import {
   countPendingAxillary,
   extendFromBud,
   foliageThinness,
+  maxMainStemNodes,
   minMainStemLateralDepth,
   nodeCarriesFoliage,
   targetFoliagePads,
@@ -114,8 +115,11 @@ function updateDominanceAndBuds(
       bud.breakForce *= 0.994; // slow decay
       bud.breakForce = clamp(bud.breakForce, 0, 1.5);
 
-      const breakChance =
-        (bud.type === 'axillary' ? 0.11 : 0.06) * seasonMul;
+      // Main-stem leader flushes rarely — vertical towers under Years FF (#87)
+      const order = branchOrder(tree, node.id);
+      let breakChance =
+        (bud.type === 'axillary' ? 0.11 : order === 0 ? 0.018 : 0.06) *
+        seasonMul;
       if (
         bud.breakForce >= species.budBreakThreshold &&
         seasonMul > 0.35 &&
@@ -480,13 +484,15 @@ export function tickDay(tree: TreeState, opts?: TickOpts): GrowthStats {
     ) {
       return false;
     }
-    // Cap spindly tip runs: once a shoot is a long collinear stick, rest the
-    // terminal so axillary forks (preferred pass below) can claim budget (#87).
+    // Cap spindly tip runs / leader towers so primary spend goes to pads (#87).
     if (bud.type === 'terminal') {
       const run = unbranchedRunLength(tree, node.id);
       const order = branchOrder(tree, node.id);
       if (run >= 5 && order >= 1) return false;
-      if (run >= 7 && order === 0) return false;
+      // Soft main-stem height budget: only +2 internodes past sapling scaffold
+      if (order === 0 && run >= maxMainStemNodes(species.saplingStemNodes)) {
+        return false;
+      }
     }
     const estLen =
       (species.internodeLength.min + species.internodeLength.max) * 0.5;
