@@ -350,6 +350,156 @@ button[data-tool='pinch'].active {
   max-width: 380px;
 }
 
+/* Optional shokunin path checklist (practice only) — quiet, collapsible */
+.checklist {
+  pointer-events: auto;
+  align-self: flex-start;
+  max-width: min(200px, calc(100% - 88px));
+  margin: 0;
+  padding: 5px 8px 6px;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: var(--radius);
+  box-shadow: var(--shadow);
+  backdrop-filter: blur(16px) saturate(1.08);
+  -webkit-backdrop-filter: blur(16px) saturate(1.08);
+  opacity: 0.68;
+  color: var(--muted);
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
+
+.checklist[hidden] {
+  display: none;
+}
+
+.checklist-summary {
+  cursor: pointer;
+  list-style: none;
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  font-size: 0.6rem;
+  font-weight: 500;
+  opacity: 0.88;
+  user-select: none;
+}
+
+.checklist-summary::-webkit-details-marker {
+  display: none;
+}
+
+.checklist-summary::before {
+  content: '·';
+  opacity: 0.5;
+  letter-spacing: 0;
+}
+
+.checklist[open] .checklist-summary::before {
+  content: '–';
+}
+
+.checklist-count {
+  letter-spacing: 0.04em;
+  text-transform: none;
+  font-size: 0.62rem;
+  opacity: 0.7;
+  font-weight: 400;
+}
+
+.checklist-list {
+  list-style: none;
+  margin: 6px 0 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+}
+
+.checklist-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0;
+  min-height: 26px;
+}
+
+.checklist-mark {
+  flex-shrink: 0;
+  width: 26px;
+  min-height: 26px;
+  padding: 0;
+  margin: 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.checklist-mark::before {
+  content: '';
+  width: 0.65em;
+  height: 0.65em;
+  border-radius: 50%;
+  border: 1px solid rgba(60, 52, 42, 0.28);
+  background: transparent;
+}
+
+.checklist-row.done .checklist-mark::before {
+  background: var(--accent);
+  border-color: var(--accent);
+  opacity: 0.55;
+}
+
+.checklist-item {
+  flex: 1;
+  min-width: 0;
+  min-height: 26px;
+  margin: 0;
+  padding: 3px 4px 3px 0;
+  border: none;
+  border-radius: 8px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 0.68rem;
+  font-weight: 400;
+  letter-spacing: 0.01em;
+  text-align: left;
+  cursor: pointer;
+}
+
+.checklist-item:hover,
+.checklist-mark:hover,
+.checklist-item:focus-visible,
+.checklist-mark:focus-visible {
+  background: rgba(40, 34, 26, 0.05);
+  color: var(--text);
+  outline: none;
+}
+
+.checklist-row.done .checklist-item {
+  opacity: 0.58;
+  text-decoration: none;
+}
+
+@media (max-width: 719px) {
+  .checklist {
+    max-width: min(168px, 44vw);
+    opacity: 0.6;
+    padding: 4px 6px 5px;
+  }
+
+  .checklist-item {
+    font-size: 0.64rem;
+  }
+}
+
 #hud > .panel.tools {
   margin-top: auto;
 }
