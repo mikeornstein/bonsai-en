@@ -1,7 +1,7 @@
 # Sumi / moyogi practice references
 
-**Issue:** #53  
-**Purpose:** Ground practice-mode target geometry (`src/sim/practice/target.ts`) and sumi ink ghost (`src/render/sumi.ts`) in classic informal-upright (moyogi) proportion and ink language—not invent the silhouette from code alone.
+**Issues:** #53 (moyogi grounding) · #72 (cascade / literati packs)  
+**Purpose:** Ground practice-mode target geometry (`src/sim/practice/target.ts`) and sumi ink ghost (`src/render/sumi.ts`) in classic informal-upright (moyogi) proportion and ink language—not invent the silhouette from code alone. Extra packs (#72) reuse the same ink language with new stem/envelope coordinates (no new plate binaries required for cascade/literati v1).
 
 ## How we use these
 
@@ -10,7 +10,7 @@
 | **Geometry** | Front silhouette only: stem S-curve rhythm, foot/waist/pad/apex envelope. Coordinates stay soil-local meters. |
 | **Ink read** | Brush weight hierarchy (stem > outline > fill), negative space, quiet presence so living wood stays primary. |
 | **Scoring** | Target polygon + `PRACTICE_STEM` feed `scorePracticeMatch`; refs justify shape, not hard “photocopy” matching. |
-| **Not used for** | Photoreal foliage, multi-style packs, or player-facing gallery UI (future). |
+| **Not used for** | Photoreal foliage or a full style catalog. Packs moyogi / cascade / literati live in `target.ts` (#72); optional future plates for cascade/literati can land here. |
 
 **License policy:** Only public-domain, Creative Commons, or **original** plates generated for this repo. Attribution required for CC works. Do not add copyrighted books, stock, or social-media scrapes as binaries.
 
@@ -49,7 +49,17 @@ Grounded in the plates above:
 2. **Envelope (`practiceTargetPolygon`)** — Away from pure diamond toward **cloud silhouette** (procumbens, redwood, original ink): narrow nebari foot, soft mid **waist** (trunk read), fuller asymmetric upper pad (slightly more mass mid-right), **rounded apex** instead of a hard point.
 3. **Scale** — Still ~25 cm soil-to-apex training sapling (`PRACTICE_HEIGHT ≈ 0.25 m`); half-width ~7 cm keeps band-fit achievable with stylized pads.
 
-Scoring API and grade bands are unchanged; only the shared geometry moves.
+Scoring API and grade bands are unchanged for moyogi; only the shared geometry moves.
+
+### Pack geometry notes (#72)
+
+| Pack | Stem story | Envelope | Scale |
+|------|------------|----------|--------|
+| **moyogi** | First left · right counter · upper return (above) | Cloud pad | ~25 cm, half-width ~7 cm |
+| **cascade** | Rise to crest, then flow +x and down past rim | Flowing teardrop (semi-cascade) | Crest ~11 cm; tip `yMin ≈ −5 cm` |
+| **literati** | Tall sparse S (bunjin rhythm) | Narrow pad stack | ~32 cm, half-width ~3.8 cm |
+
+No new binary plates for cascade/literati in v1 — geometry is tuned for front-view ink readability with similar vertex density to moyogi. Study links: Wikimedia [Cascade style bonsai](https://commons.wikimedia.org/wiki/Category:Cascade_style_bonsai), [Literati style bonsai](https://commons.wikimedia.org/wiki/Category:Literati_style_bonsai) (do not commit unclear-license binaries).
 
 ---
 

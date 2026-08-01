@@ -5,27 +5,29 @@
 
 ## What practice mode is
 
-**Practice is the default play mode.** A **sumi ink silhouette** (soft fill + outline + stem line) of a classic **informal upright (moyogi)** target is visible on cold start, with live grade feedback. Geometry is shared between:
+**Practice is the default play mode.** A **sumi ink silhouette** (soft fill + outline + stem line) of a classic **informal upright (moyogi)** target is visible on cold start, with live grade feedback. Additional shape packs (#72) — **cascade** and **literati** — share the same score pipeline. Geometry is shared between:
 
 | Layer | File |
 |-------|------|
-| Target coordinates (soil-local m) | `src/sim/practice/target.ts` |
-| Quantitative score | `src/sim/practice/score.ts` |
+| Target packs (soil-local m) | `src/sim/practice/target.ts` — `PracticePack`, `getActivePracticePack()` |
+| Quantitative score | `src/sim/practice/score.ts` — `scorePracticeMatch(tree, pack?)` |
 | Visual ghost | `src/render/sumi.ts` |
-| Live HUD + harness | `Game.getPracticeScore()`, `window.__bonsai.getPracticeScore()` |
+| Live HUD + harness | `Game.getPracticeScore()`, `window.__bonsai.getPracticeScore()` / `setPracticePack` |
 | Mode preference | `localStorage` key `bonsai-en:mode` = `practice` \| `sandbox` |
+| Pack preference | `localStorage` key `bonsai-en:practice-pack` = `moyogi` \| `cascade` \| `literati` |
 | Reference plates (licenses + rationale) | [`docs/refs/sumi/`](./refs/sumi/README.md) |
 
 | Control | Behavior |
 |---------|----------|
-| Default / first visit | **Practice** — ghost + grade (status e.g. `Practice · forming 68`); soft-snaps play camera to **front viewing face** |
+| Default / first visit | **Practice** + **moyogi** pack — ghost + grade; soft-snaps play camera to **front viewing face** |
 | `⋯ → Free train` | Sandbox — hide ghost, stop grade thrash; tools unchanged; front lock cleared |
 | `⋯ → Practice` | Restore ghost + scoring + soft front snap (status `Viewing face`) |
 | `⋯ → Lock front` | Practice only — disable orbit rotate + snap to front so score and eyes stay aligned |
+| `⋯ → Shape: …` | Cycle pack **Moyogi → Cascade → Literati → …**; rebuilds ink + grade |
 | Off-axis (unlocked) | Quiet hint: “Score is front silhouette · Lock front in ⋯” |
-| Preference | Survives reload; share/import keep last user mode |
-| First-run hint | “Match the ink · prune outside · wire the trunk · grow into the pad” |
-| Harness | `setFrontLock(bool)`, `isFrontLock()`, `snapToFrontFace()`; ortho `setView('front')` unchanged |
+| Preference | Mode + pack survive reload; share/import keep last user mode |
+| First-run hint | Pack-specific (moyogi: prune outside · wire trunk · grow into pad) |
+| Harness | `setFrontLock`, `snapToFrontFace`, `setPracticePack` / `getPracticePack`; ortho `setView('front')` unchanged |
 | Path checklist (#70) | Quiet collapsible **Path** steps in Practice only (hidden in Free train). Advisory — no tool locks. Tap step → status hint. Soft checks from orbit / prune / trunk wire / set / Season·Mo / Still. |
 
 **Art grounding (#53):** stem S-curve and cloud envelope are tuned from CC moyogi diagrams/photos plus original ink plates (not a freehand diamond). Ink hierarchy is stem > outline > fill so the ghost stays quiet against living wood.
@@ -64,8 +66,8 @@ score = 0.28·containment
 |-----------|---------|
 | **containment** | Fraction of tree raster mass **inside** target polygon (`iou` field in API for stability) |
 | **bandFit** | Per-height-band width & mid alignment vs target envelope |
-| **centerlineFit** | Main-stem tips vs `PRACTICE_STEM` S-curve (`exp(-rmse/2cm)`) |
-| **heightFit** | Tree apex vs ~25.2 cm target height (`PRACTICE_HEIGHT`) |
+| **centerlineFit** | Main-stem tips vs active pack stem (`exp(-rmse/2cm)`) |
+| **heightFit** | Tree apex vs pack `height` (moyogi ~25.2 cm); cascade soft-rewards drop toward `yMin` |
 | **presenceFit** | Fraction of target height bands that contain any tree |
 
 **Grades**
@@ -116,8 +118,10 @@ Harness (practice is **on by default**; scripts may still set explicitly):
 ```js
 window.__bonsai.setSumiChallenge(true)   // force practice; persists mode
 window.__bonsai.setSumiChallenge(false)  // free train / sandbox
+window.__bonsai.setPracticePack('cascade')  // or 'moyogi' | 'literati' | 'cycle'
+window.__bonsai.getPracticePack()           // { id, name, height }
 window.__bonsai.getPracticeScore()
-// { score, iou, coverage, overflow, centerlineRmse, heightRatio, bandFit, grade, label }
+// { score, iou, coverage, overflow, centerlineRmse, heightRatio, bandFit, grade, label, packId }
 ```
 
 ## Shokunin (craftsman) path
@@ -189,18 +193,29 @@ npm run practice:shokunin
 1. ~~**View-locked “front for practice”**~~ — **done (#66):** Practice enable soft-snaps front; optional **Lock front** in ⋯; off-axis quiet note when unlocked.  
 2. **Persist practice score in the meta panel** (not only status) so tool messages don’t bury it.  
 3. **Celebrate match** — call `acknowledge()` + soft ink pulse when grade first hits `match`.  
-4. **Multiple targets** — cascade, literati, windswept packs once one shape is fun.  
+4. ~~**Multiple targets**~~ — **shipped in #72** (moyogi + cascade + literati). Future: windswept, broom, formal upright.  
 5. **Seeded sapling for practice scripts** — reduce score variance across CI runs.  
-6. **Player-facing checklist** — boot hint now covers prune / wire / grow (issue #52); optional richer checklist still open.
+6. **Player-facing checklist** — boot hint now covers prune / wire / grow (issue #52); optional richer checklist still open.  
+7. **Per-pack shokunin paths** — cascade/literati craftsman scripts (hack pack smoke is in `practice:match`).
+
+## Shape packs (#72)
+
+| Pack | Id | Silhouette | Notes |
+|------|-----|------------|--------|
+| **Moyogi** (default) | `moyogi` | Informal upright cloud pad | Same geometry as pre-#72; default scores unchanged |
+| **Cascade** | `cascade` | Semi-cascade (han-kengai) | Crest then flow; apex near/below pot rim (`yMin < 0`) |
+| **Literati** | `literati` | Bunjin tall sparse S | Narrow envelope, taller stem |
+
+Menu: `⋯ → Shape: Moyogi` cycles packs. Ghost rebuilds from pack stem + polygon; score components are the same weights, pack-local bounds.
 
 ## Related code
 
 - `docs/refs/sumi/` — license-safe reference pack + rationale (#53)  
-- `src/sim/practice/target.ts` — shape data  
+- `src/sim/practice/target.ts` — pack registry + moyogi/cascade/literati geometry  
 - `src/sim/practice/score.ts` — metric + tests  
 - `src/sim/practice/shokunin.ts` — craftsman ranking / stem helpers + tests  
-- `src/render/sumi.ts` — ghost  
-- `src/app/game.ts` — `setPracticeMode`, boot default + `bonsai-en:mode`  
-- `scripts/practice-match.mjs` — automated hack train + report  
-- `scripts/practice-shokunin.mjs` — craftsman path + report  
+- `src/render/sumi.ts` — ghost (rebuilds on pack change)  
+- `src/app/game.ts` — `setPracticeMode`, `setPracticePack`, `bonsai-en:mode` / `practice-pack`  
+- `scripts/practice-match.mjs` — automated hack train + cascade/literati grade smoke  
+- `scripts/practice-shokunin.mjs` — craftsman path + report (moyogi)  
 

@@ -4,14 +4,15 @@
  * Compares living wood+foliage to the sumi target in the front (x,y) plane.
  * Uses envelope / centerline metrics (not filled IoU of a solid pad), so a
  * real bonsai skeleton can score well without solid foliage mass.
+ *
+ * Multi-pack (#72): pass a PracticePack or use getActivePracticePack().
+ * Moyogi numbers are unchanged when scoring the moyogi pack.
  */
 import { computeWorldFrames } from '../tree';
 import type { Internode, NodeId, TreeState } from '../types';
 import {
-  PRACTICE_HALF_WIDTH,
-  PRACTICE_HEIGHT,
-  PRACTICE_STEM,
-  practiceTargetPolygon,
+  getActivePracticePack,
+  type PracticePack,
 } from './target';
 
 export type PracticeGrade = 'far' | 'forming' | 'close' | 'match';
@@ -37,15 +38,31 @@ export interface PracticeScore {
   grade: PracticeGrade;
   /** Short HUD copy, e.g. "Practice · close 62". */
   label: string;
+  /** Pack used for this score (moyogi / cascade / literati). */
+  packId?: string;
 }
 
 const GRID_W = 80;
 const GRID_H = 100;
-const X_MIN = -PRACTICE_HALF_WIDTH * 1.4;
-const X_MAX = PRACTICE_HALF_WIDTH * 1.4;
-const Y_MIN = -0.01;
-const Y_MAX = PRACTICE_HEIGHT * 1.2;
 const BANDS = 12;
+
+interface RasterBounds {
+  xMin: number;
+  xMax: number;
+  yMin: number;
+  yMax: number;
+}
+
+function boundsForPack(pack: PracticePack): RasterBounds {
+  const half = pack.halfWidth;
+  const yLo = pack.yMin ?? 0;
+  return {
+    xMin: -half * 1.4,
+    xMax: half * 1.4,
+    yMin: yLo - 0.01,
+    yMax: pack.height * 1.2 + Math.max(0, -yLo) * 0.15,
+  };
+}
 
 function cellIndex(ix: number, iy: number): number {
   return iy * GRID_W + ix;
@@ -69,23 +86,24 @@ function stampDisk(
   cx: number,
   cy: number,
   radius: number,
+  b: RasterBounds,
 ): void {
-  const r = Math.max(radius, (X_MAX - X_MIN) / GRID_W);
-  const i0 = Math.max(0, Math.floor(((cx - r - X_MIN) / (X_MAX - X_MIN)) * GRID_W));
+  const r = Math.max(radius, (b.xMax - b.xMin) / GRID_W);
+  const i0 = Math.max(0, Math.floor(((cx - r - b.xMin) / (b.xMax - b.xMin)) * GRID_W));
   const i1 = Math.min(
     GRID_W - 1,
-    Math.floor(((cx + r - X_MIN) / (X_MAX - X_MIN)) * GRID_W),
+    Math.floor(((cx + r - b.xMin) / (b.xMax - b.xMin)) * GRID_W),
   );
-  const j0 = Math.max(0, Math.floor(((cy - r - Y_MIN) / (Y_MAX - Y_MIN)) * GRID_H));
+  const j0 = Math.max(0, Math.floor(((cy - r - b.yMin) / (b.yMax - b.yMin)) * GRID_H));
   const j1 = Math.min(
     GRID_H - 1,
-    Math.floor(((cy + r - Y_MIN) / (Y_MAX - Y_MIN)) * GRID_H),
+    Math.floor(((cy + r - b.yMin) / (b.yMax - b.yMin)) * GRID_H),
   );
   const r2 = r * r;
   for (let iy = j0; iy <= j1; iy++) {
-    const y = Y_MIN + ((iy + 0.5) / GRID_H) * (Y_MAX - Y_MIN);
+    const y = b.yMin + ((iy + 0.5) / GRID_H) * (b.yMax - b.yMin);
     for (let ix = i0; ix <= i1; ix++) {
-      const x = X_MIN + ((ix + 0.5) / GRID_W) * (X_MAX - X_MIN);
+      const x = b.xMin + ((ix + 0.5) / GRID_W) * (b.xMax - b.xMin);
       const dx = x - cx;
       const dy = y - cy;
       if (dx * dx + dy * dy <= r2) grid[cellIndex(ix, iy)] = 1;
@@ -100,22 +118,27 @@ function stampSegment(
   x1: number,
   y1: number,
   radius: number,
+  b: RasterBounds,
 ): void {
   const dx = x1 - x0;
   const dy = y1 - y0;
   const len = Math.hypot(dx, dy);
-  const steps = Math.max(2, Math.ceil(len / ((X_MAX - X_MIN) / GRID_W / 2)));
+  const steps = Math.max(2, Math.ceil(len / ((b.xMax - b.xMin) / GRID_W / 2)));
   for (let s = 0; s <= steps; s++) {
     const t = s / steps;
-    stampDisk(grid, x0 + dx * t, y0 + dy * t, radius);
+    stampDisk(grid, x0 + dx * t, y0 + dy * t, radius, b);
   }
 }
 
-function fillPolygon(grid: Uint8Array, poly: Array<[number, number]>): void {
+function fillPolygon(
+  grid: Uint8Array,
+  poly: Array<[number, number]>,
+  b: RasterBounds,
+): void {
   for (let iy = 0; iy < GRID_H; iy++) {
-    const y = Y_MIN + ((iy + 0.5) / GRID_H) * (Y_MAX - Y_MIN);
+    const y = b.yMin + ((iy + 0.5) / GRID_H) * (b.yMax - b.yMin);
     for (let ix = 0; ix < GRID_W; ix++) {
-      const x = X_MIN + ((ix + 0.5) / GRID_W) * (X_MAX - X_MIN);
+      const x = b.xMin + ((ix + 0.5) / GRID_W) * (b.xMax - b.xMin);
       if (pointInPoly(x, y, poly)) grid[cellIndex(ix, iy)] = 1;
     }
   }
@@ -161,6 +184,7 @@ function targetBandWidth(
   poly: Array<[number, number]>,
   y0: number,
   y1: number,
+  b: RasterBounds,
 ): { width: number; present: boolean; mid: number } {
   // Sample polygon edges for points in band
   const pts: Array<{ x: number; y: number; r: number }> = [];
@@ -180,7 +204,7 @@ function targetBandWidth(
   let maxX = -Infinity;
   const midY = (y0 + y1) / 2;
   for (let i = 0; i < 64; i++) {
-    const x = X_MIN + ((i + 0.5) / 64) * (X_MAX - X_MIN);
+    const x = b.xMin + ((i + 0.5) / 64) * (b.xMax - b.xMin);
     if (pointInPoly(x, midY, poly)) {
       minX = Math.min(minX, x);
       maxX = Math.max(maxX, x);
@@ -208,17 +232,18 @@ export function gradeFromScore(score: number): PracticeGrade {
   return 'far';
 }
 
-function labelFor(grade: PracticeGrade, score: number): string {
+function labelFor(grade: PracticeGrade, score: number, packName?: string): string {
   const pct = Math.round(score * 100);
+  const prefix = packName ? `Practice · ${packName}` : 'Practice';
   switch (grade) {
     case 'match':
-      return `Practice · match ${pct}`;
+      return `${prefix} · match ${pct}`;
     case 'close':
-      return `Practice · close ${pct}`;
+      return `${prefix} · close ${pct}`;
     case 'forming':
-      return `Practice · forming ${pct}`;
+      return `${prefix} · forming ${pct}`;
     default:
-      return `Practice · far ${pct}`;
+      return `${prefix} · far ${pct}`;
   }
 }
 
@@ -227,24 +252,31 @@ function clamp01(v: number): number {
 }
 
 /**
- * Score how well the live tree silhouette matches the sumi practice target.
+ * Score how well the live tree silhouette matches a sumi practice pack.
  * Coordinates: tree world frames with root at soil origin (y up).
+ * @param pack defaults to the active pack (moyogi unless set).
  */
-export function scorePracticeMatch(tree: TreeState): PracticeScore {
+export function scorePracticeMatch(
+  tree: TreeState,
+  pack: PracticePack = getActivePracticePack(),
+): PracticeScore {
   const frames = computeWorldFrames(tree);
-  const target = practiceTargetPolygon();
+  const target = pack.polygon();
+  const b = boundsForPack(pack);
   const targetGrid = new Uint8Array(GRID_W * GRID_H);
   const treeGrid = new Uint8Array(GRID_W * GRID_H);
-  fillPolygon(targetGrid, target);
+  fillPolygon(targetGrid, target, b);
 
   const treeSamples: Array<{ x: number; y: number; r: number }> = [];
   let maxY = 0;
+  let minY = 0;
 
   for (const node of Object.values(tree.nodes)) {
     if (!node.living) continue;
     const f = frames.get(node.id);
     if (!f) continue;
     maxY = Math.max(maxY, f.tip[1], f.base[1]);
+    minY = Math.min(minY, f.tip[1], f.base[1]);
     const woodR = Math.max(node.radius * 1.8, 0.0025);
     stampSegment(
       treeGrid,
@@ -253,6 +285,7 @@ export function scorePracticeMatch(tree: TreeState): PracticeScore {
       f.tip[0],
       f.tip[1],
       woodR,
+      b,
     );
     treeSamples.push({
       x: (f.base[0] + f.tip[0]) / 2,
@@ -268,7 +301,7 @@ export function scorePracticeMatch(tree: TreeState): PracticeScore {
       const fy = f.base[1] + (f.tip[1] - f.base[1]) * t;
       const side = Math.cos(fol.azimuth) * 0.008 * Math.sqrt(fol.area * 800);
       const padR = Math.max(0.006, Math.sqrt(fol.area) * 0.35);
-      stampDisk(treeGrid, fx + side, fy, padR);
+      stampDisk(treeGrid, fx + side, fy, padR, b);
       treeSamples.push({ x: fx + side, y: fy, r: padR });
     }
   }
@@ -283,15 +316,18 @@ export function scorePracticeMatch(tree: TreeState): PracticeScore {
   const overflow = treeCount > 0 ? outside / treeCount : 1;
   const containment = 1 - overflow;
 
-  // Height-band envelope fit
+  // Height-band envelope fit across full pack vertical span (cascade yMin < 0)
+  const bandLo = pack.yMin ?? 0;
+  const bandHi = pack.height;
+  const bandSpan = Math.max(bandHi - bandLo, 0.02);
   let bandSum = 0;
   let bandN = 0;
   let presence = 0;
   let presenceN = 0;
-  for (let b = 0; b < BANDS; b++) {
-    const y0 = (b / BANDS) * PRACTICE_HEIGHT;
-    const y1 = ((b + 1) / BANDS) * PRACTICE_HEIGHT;
-    const tBand = targetBandWidth(target, y0, y1);
+  for (let bi = 0; bi < BANDS; bi++) {
+    const y0 = bandLo + (bi / BANDS) * bandSpan;
+    const y1 = bandLo + ((bi + 1) / BANDS) * bandSpan;
+    const tBand = targetBandWidth(target, y0, y1, b);
     if (!tBand.present || tBand.width < 0.004) continue;
     presenceN++;
     const trBand = bandWidth(treeSamples, y0, y1);
@@ -329,18 +365,25 @@ export function scorePracticeMatch(tree: TreeState): PracticeScore {
   if (stemSamples.length) {
     let sum = 0;
     for (const [x, y] of stemSamples) {
-      sum += distToPolyline(x, y, PRACTICE_STEM) ** 2;
+      sum += distToPolyline(x, y, pack.stem) ** 2;
     }
     centerlineRmse = Math.sqrt(sum / stemSamples.length);
   } else {
-    centerlineRmse = PRACTICE_HALF_WIDTH;
+    centerlineRmse = pack.halfWidth;
   }
   const centerlineFit = Math.exp(-centerlineRmse / 0.02);
 
-  const heightRatio = PRACTICE_HEIGHT > 0 ? maxY / PRACTICE_HEIGHT : 0;
-  const heightFit = Math.exp(
+  // Height: upright packs use apex; cascade also rewards reaching toward yMin tip
+  const heightRatio = pack.height > 0 ? maxY / pack.height : 0;
+  let heightFit = Math.exp(
     -2.0 * Math.abs(Math.log(Math.max(0.2, heightRatio))),
   );
+  if ((pack.yMin ?? 0) < -0.01) {
+    // Semi-cascade: soft reward for material that drops toward the tip band
+    const tipTarget = pack.yMin ?? 0;
+    const dropRatio = tipTarget < 0 ? Math.min(1, Math.max(0, -minY / -tipTarget)) : 0;
+    heightFit = clamp01(0.7 * heightFit + 0.3 * dropRatio);
+  }
 
   // Envelope-first blend — sparse trees can still score "close"
   const score = clamp01(
@@ -352,6 +395,8 @@ export function scorePracticeMatch(tree: TreeState): PracticeScore {
   );
 
   const grade = gradeFromScore(score);
+  // Moyogi keeps legacy "Practice · grade" labels for HUD stability; others name the pack
+  const labelName = pack.id === 'moyogi' ? undefined : pack.name;
   return {
     score,
     iou: containment, // harness: containment under historical key
@@ -361,17 +406,22 @@ export function scorePracticeMatch(tree: TreeState): PracticeScore {
     heightRatio,
     bandFit,
     grade,
-    label: labelFor(grade, score),
+    label: labelFor(grade, score, labelName),
+    packId: pack.id,
   };
 }
 
 /** ASCII debug dump of target vs tree masks (for tests / agents). */
-export function debugPracticeRaster(tree: TreeState): string {
+export function debugPracticeRaster(
+  tree: TreeState,
+  pack: PracticePack = getActivePracticePack(),
+): string {
   const frames = computeWorldFrames(tree);
-  const target = practiceTargetPolygon();
+  const target = pack.polygon();
+  const b = boundsForPack(pack);
   const targetGrid = new Uint8Array(GRID_W * GRID_H);
   const treeGrid = new Uint8Array(GRID_W * GRID_H);
-  fillPolygon(targetGrid, target);
+  fillPolygon(targetGrid, target, b);
   for (const node of Object.values(tree.nodes)) {
     if (!node.living) continue;
     const f = frames.get(node.id);
@@ -383,6 +433,7 @@ export function debugPracticeRaster(tree: TreeState): string {
       f.tip[0],
       f.tip[1],
       Math.max(node.radius * 1.8, 0.0025),
+      b,
     );
   }
   const cols = 24;

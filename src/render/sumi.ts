@@ -3,14 +3,18 @@
  * Practice is the default play mode (see Game / localStorage `bonsai-en:mode`).
  * Toggle via UI (Free train ↔ Practice) or window.__bonsai.setSumiChallenge(on).
  *
- * Geometry comes from src/sim/practice/target.ts so scoring and ghost share one shape.
+ * Geometry comes from the active practice pack (src/sim/practice/target.ts)
+ * so scoring and ghost share one shape. Packs: moyogi (default), cascade, literati (#72).
  *
  * Ink hierarchy (docs/refs/sumi/, issue #53): stem > outline > fill.
  * Ghost stays quiet so living wood and product lighting remain primary.
  */
 import * as THREE from 'three';
 import { PEDESTAL_HEIGHT, POT_SOIL_LOCAL_Y } from './pot';
-import { PRACTICE_STEM, practiceTargetPolygon } from '../sim/practice/target';
+import {
+  getActivePracticePack,
+  type PracticePack,
+} from '../sim/practice/target';
 import type { PracticeScore } from '../sim/practice/score';
 import type { PracticeMilestoneKind } from '../sim/practice/milestones';
 import { PRACTICE_MILESTONE_COPY } from '../sim/practice/milestones';
@@ -34,6 +38,7 @@ export class SumiChallenge {
   /** Timestamp (ms) until which milestone pulse opacities hold. */
   private pulseUntil = 0;
   private pulseKind: PracticeMilestoneKind | null = null;
+  private builtPackId: string | null = null;
 
   constructor() {
     this.group.name = 'sumiChallenge';
@@ -43,7 +48,7 @@ export class SumiChallenge {
   setEnabled(on: boolean): void {
     this.enabled = on;
     this.group.visible = on;
-    if (on && !this.line) this.buildGhost();
+    if (on) this.ensureGhost();
     if (!on) {
       this.pulseUntil = 0;
       this.pulseKind = null;
@@ -53,6 +58,17 @@ export class SumiChallenge {
 
   isEnabled(): boolean {
     return this.enabled;
+  }
+
+  /**
+   * Rebuild ink geometry from a practice pack (or active pack).
+   * Call when the player cycles shape packs.
+   */
+  setPack(pack: PracticePack = getActivePracticePack()): void {
+    if (this.builtPackId === pack.id && this.line) return;
+    this.disposeGeometry();
+    this.buildGhost(pack);
+    this.lastGrade = null;
   }
 
   /**
@@ -149,9 +165,32 @@ export class SumiChallenge {
     }
   }
 
-  private buildGhost(): void {
+  private ensureGhost(): void {
+    const pack = getActivePracticePack();
+    if (!this.line || this.builtPackId !== pack.id) {
+      this.disposeGeometry();
+      this.buildGhost(pack);
+    }
+  }
+
+  private disposeGeometry(): void {
+    for (const obj of [this.fill, this.line, this.stemLine]) {
+      if (!obj) continue;
+      this.group.remove(obj);
+      obj.geometry.dispose();
+      const m = obj.material;
+      if (Array.isArray(m)) m.forEach((x) => x.dispose());
+      else m.dispose();
+    }
+    this.line = null;
+    this.fill = null;
+    this.stemLine = null;
+    this.builtPackId = null;
+  }
+
+  private buildGhost(pack: PracticePack = getActivePracticePack()): void {
     const soil = PEDESTAL_HEIGHT + POT_SOIL_LOCAL_Y;
-    const poly = practiceTargetPolygon();
+    const poly = pack.polygon();
     const shape = new THREE.Shape();
     poly.forEach(([x, y], i) => {
       const px = x;
@@ -193,8 +232,8 @@ export class SumiChallenge {
     this.line.renderOrder = 2;
     this.group.add(this.line);
 
-    // Stem alone slightly stronger — moyogi story is the trunk line
-    const stemPts = PRACTICE_STEM.map(
+    // Stem alone slightly stronger — silhouette story is the trunk line
+    const stemPts = pack.stem.map(
       ([x, y]) => new THREE.Vector3(x, soil + y, 0.0005),
     );
     const stemGeo = new THREE.BufferGeometry().setFromPoints(stemPts);
@@ -207,9 +246,11 @@ export class SumiChallenge {
     this.stemLine = new THREE.Line(stemGeo, stemMat);
     this.stemLine.renderOrder = 3;
     this.group.add(this.stemLine);
+    this.builtPackId = pack.id;
   }
 
   dispose(): void {
+    this.disposeGeometry();
     this.group.traverse((obj) => {
       if (obj instanceof THREE.Mesh || obj instanceof THREE.Line) {
         obj.geometry.dispose();
@@ -218,8 +259,5 @@ export class SumiChallenge {
         else m.dispose();
       }
     });
-    this.line = null;
-    this.fill = null;
-    this.stemLine = null;
   }
 }
