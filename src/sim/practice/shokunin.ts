@@ -15,6 +15,12 @@ import {
   practiceTargetPolygon,
 } from './target';
 
+/** Coach / status copy for a ranked overflow tip (Practice + Inspect). */
+export type OverflowReason =
+  | 'Outside pad'
+  | 'Above apex'
+  | 'Depth spoils front';
+
 export interface OverflowRanked {
   id: NodeId;
   /** Higher = worse for front silhouette; prune first. */
@@ -22,6 +28,34 @@ export interface OverflowRanked {
   tipX: number;
   tipY: number;
   tipZ: number;
+  /** Primary human-readable reason for coaching / status. */
+  reason: OverflowReason;
+}
+
+/**
+ * Pick the dominant envelope failure for coach copy.
+ * Weights match the contributions inside rankOverflowPruneTargets.
+ */
+export function primaryOverflowReason(contrib: {
+  outsidePoly: boolean;
+  lateralOver: number;
+  heightOver: number;
+  depthPenalty: number;
+  lowFat: number;
+}): OverflowReason {
+  const cOutside =
+    (contrib.outsidePoly ? 0.04 : 0) +
+    contrib.lateralOver * 2.2 +
+    contrib.lowFat;
+  const cHeight = contrib.heightOver * 3.0;
+  const cDepth = contrib.depthPenalty * 1.6;
+  if (cHeight >= cOutside && cHeight >= cDepth && cHeight > 0) {
+    return 'Above apex';
+  }
+  if (cDepth >= cOutside && cDepth >= cHeight && cDepth > 0) {
+    return 'Depth spoils front';
+  }
+  return 'Outside pad';
 }
 
 function pointInPoly(
@@ -116,6 +150,13 @@ export function rankOverflowPruneTargets(
       tipX,
       tipY,
       tipZ,
+      reason: primaryOverflowReason({
+        outsidePoly,
+        lateralOver,
+        heightOver,
+        depthPenalty,
+        lowFat,
+      }),
     });
   }
 

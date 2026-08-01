@@ -4,6 +4,8 @@ import type { Internode, NodeId, Season, TreeState } from '../sim/types';
 import {
   barkMaterialForSegment,
   createBarkMaterial,
+  createCoachHighlightMaterial,
+  createCoachHighlightRimMaterial,
   createFoliageMaterial,
   createFoliageTipMaterial,
   createHighlightMaterial,
@@ -107,12 +109,21 @@ export class TreeRenderer {
   private wireMat: THREE.MeshPhysicalMaterial | null = null;
   private highlightMat: THREE.MeshBasicMaterial | null = null;
   private highlightRimMat: THREE.MeshBasicMaterial | null = null;
+  private coachMat: THREE.MeshBasicMaterial | null = null;
+  private coachRimMat: THREE.MeshBasicMaterial | null = null;
   private branchGroup = new THREE.Group();
   private foliageGroup = new THREE.Group();
   private wireGroup = new THREE.Group();
   private highlightMesh: THREE.Mesh | null = null;
   private highlightRim: THREE.Mesh | null = null;
+  /** Practice overflow coach tips (warm ink), distinct from selection. */
+  private coachMeshes: Array<{
+    id: NodeId;
+    mesh: THREE.Mesh;
+    rim: THREE.Mesh;
+  }> = [];
   private selectedId: NodeId | null = null;
+  private coachIds: NodeId[] = [];
   private scaleGeo: THREE.BufferGeometry | null = null;
   /** Branch cylinder tessellation — 10 is enough for bonsai scale (#34 rebuild cost). */
   private radialSegments = 10;
@@ -225,6 +236,8 @@ export class TreeRenderer {
     if (!this.wireMat) this.wireMat = createWireMaterial();
     if (!this.highlightMat) this.highlightMat = createHighlightMaterial();
     if (!this.highlightRimMat) this.highlightRimMat = createHighlightRimMaterial();
+    if (!this.coachMat) this.coachMat = createCoachHighlightMaterial();
+    if (!this.coachRimMat) this.coachRimMat = createCoachHighlightRimMaterial();
     if (!this.scarMat) {
       this.scarMat = new THREE.MeshStandardMaterial({
         color: new THREE.Color('#3a2a22'),
@@ -245,6 +258,35 @@ export class TreeRenderer {
 
   setSelected(id: NodeId | null): void {
     this.selectedId = id;
+  }
+
+  /**
+   * Practice coach overflow tips (warm ink). Empty clears.
+   * Distinct from primary selection highlight.
+   */
+  setCoachHighlights(ids: readonly NodeId[]): void {
+    const next = ids.slice(0, 8);
+    if (
+      next.length === this.coachIds.length &&
+      next.every((id, i) => id === this.coachIds[i])
+    ) {
+      return;
+    }
+    this.coachIds = next;
+  }
+
+  getCoachHighlights(): readonly NodeId[] {
+    return this.coachIds;
+  }
+
+  private clearCoachMeshes(): void {
+    for (const c of this.coachMeshes) {
+      this.group.remove(c.mesh);
+      this.group.remove(c.rim);
+      c.mesh.geometry.dispose();
+      c.rim.geometry.dispose();
+    }
+    this.coachMeshes = [];
   }
 
   rebuild(tree: TreeState, frames?: Map<NodeId, NodeWorld>): void {
@@ -273,6 +315,7 @@ export class TreeRenderer {
       this.highlightRim.geometry.dispose();
       this.highlightRim = null;
     }
+    this.clearCoachMeshes();
 
     const live = frames ?? computeWorldFrames(tree);
     // Bury root slightly so trunk seats in soil (no floating stick / hard disc cut)
@@ -348,6 +391,33 @@ export class TreeRenderer {
         this.group.add(this.highlightRim);
       }
     }
+
+    // Coach overflow tips — warm ink, skip if same as primary selection
+    for (const id of this.coachIds) {
+      if (id === this.selectedId) continue;
+      const node = tree.nodes[id];
+      const frame = live.get(id);
+      if (!node || !frame || !node.living) continue;
+      const baseR = Math.max(node.radius, MIN_VISUAL_RADIUS);
+      const r = baseR * 1.28;
+      const mesh = this.makeTaperedSegment(r, r * 0.88, frame, this.coachMat!);
+      mesh.userData.nodeId = id;
+      mesh.userData.coach = true;
+      mesh.renderOrder = 3;
+      this.group.add(mesh);
+      const rimR = baseR * 1.48;
+      const rim = this.makeTaperedSegment(
+        rimR,
+        rimR * 0.9,
+        frame,
+        this.coachRimMat!,
+      );
+      rim.userData.nodeId = id;
+      rim.userData.coach = true;
+      rim.renderOrder = 2;
+      this.group.add(rim);
+      this.coachMeshes.push({ id, mesh, rim });
+    }
   }
 
   /**
@@ -398,6 +468,13 @@ export class TreeRenderer {
       if (frame) {
         if (this.highlightMesh) this.placeSegment(this.highlightMesh, frame);
         if (this.highlightRim) this.placeSegment(this.highlightRim, frame);
+      }
+    }
+    for (const c of this.coachMeshes) {
+      const frame = frames.get(c.id);
+      if (frame) {
+        this.placeSegment(c.mesh, frame);
+        this.placeSegment(c.rim, frame);
       }
     }
 
@@ -1130,6 +1207,8 @@ export class TreeRenderer {
     if (this.wireMat) sharedMats.add(this.wireMat);
     if (this.highlightMat) sharedMats.add(this.highlightMat);
     if (this.highlightRimMat) sharedMats.add(this.highlightRimMat);
+    if (this.coachMat) sharedMats.add(this.coachMat);
+    if (this.coachRimMat) sharedMats.add(this.coachRimMat);
     if (this.scarMat) sharedMats.add(this.scarMat);
     if (this.budMat) sharedMats.add(this.budMat);
     if (this.pickMat) sharedMats.add(this.pickMat);
@@ -1162,9 +1241,12 @@ export class TreeRenderer {
     this.wireMat?.dispose();
     this.highlightMat?.dispose();
     this.highlightRimMat?.dispose();
+    this.coachMat?.dispose();
+    this.coachRimMat?.dispose();
     this.scarMat?.dispose();
     this.budMat?.dispose();
     this.pickMat?.dispose();
+    this.clearCoachMeshes();
     this.clearGroup(this.scarGroup);
     this.clearGroup(this.budGroup);
   }

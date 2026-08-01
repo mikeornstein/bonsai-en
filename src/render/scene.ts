@@ -526,6 +526,22 @@ export class BonsaiScene {
     this.dirty = true;
   }
 
+  /**
+   * Practice coach overflow tip highlights (warm ink).
+   * Empty array clears. Marks dirty when the set actually changes.
+   */
+  setCoachHighlights(ids: readonly NodeId[]): void {
+    const prev = this.treeRenderer.getCoachHighlights();
+    this.treeRenderer.setCoachHighlights(ids);
+    const next = this.treeRenderer.getCoachHighlights();
+    if (
+      prev.length !== next.length ||
+      prev.some((id, i) => id !== next[i])
+    ) {
+      this.dirty = true;
+    }
+  }
+
   syncTree(tree: TreeState, frames?: Map<NodeId, NodeWorld>): void {
     if (!this.dirty) return;
     try {
