@@ -12,10 +12,10 @@ const HASH_PREFIX = 's=';
 /**
  * Max full share URL length before falling back to file download.
  * Hash fragments are not sent to servers, so this can be higher than the
- * classic ~2k GET limit. 24k stays well under common browser URL caps
- * (~32k–2M depending on engine) while covering ~1-year grown trees.
+ * classic ~2k GET limit. 32k stays within common browser URL caps while
+ * covering ~1-year trees at 2× internode resolution (#83; was 24k).
  */
-export const MAX_SHARE_URL_LENGTH = 24_000;
+export const MAX_SHARE_URL_LENGTH = 32_000;
 
 /** Serialize tree to the compact JSON string used inside the share hash. */
 export function serializeTreeForShare(tree: TreeState): string {

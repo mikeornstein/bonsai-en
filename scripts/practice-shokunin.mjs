@@ -442,7 +442,7 @@ for (let loop = 0; loop < 4; loop++) {
               Math.max(0, Math.abs(n.tipZ) - 0.022) * 1.5;
             return { id: n.id, key };
           })
-          .filter((n) => n.key > 0.012)
+          .filter((n) => n.key > 0.006)
           .sort((a, b) => b.key - a.key);
         for (const leaf of overflow.slice(0, 2 + Math.floor(loopIndex / 2))) {
           const r = window.__bonsai.act('prune', leaf.id);

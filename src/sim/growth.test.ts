@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { describeNode, tickDay, tickDays } from './growth';
+import { describeNode, MAX_TREE_NODES, tickDay, tickDays } from './growth';
 import { createRng, quatRotateVec3, vec3 } from './math';
 import { getSpecies } from './species/juniper';
 import {
@@ -17,6 +17,7 @@ import {
 import { pruneAt } from './tools/prune';
 import { applyWire, removeWire } from './tools/wire';
 import { environmentAt, vitalityWord } from './time';
+import type { Internode, NodeId } from './types';
 
 describe('sapling', () => {
   it('creates a living juniper with foliage', () => {
@@ -24,6 +25,38 @@ describe('sapling', () => {
     expect(tree.rootId).toBeTruthy();
     expect(countLivingNodes(tree)).toBeGreaterThan(5);
     expect(totalFoliageArea(tree)).toBeGreaterThan(0);
+  });
+
+  /** #83: half internode length / 2× stem nodes keeps pot-scale height. */
+  it('uses finer internodes with comparable stem height (#83)', () => {
+    const species = getSpecies('juniper-procumbens');
+    expect(species.internodeLength.min).toBeCloseTo(0.006, 5);
+    expect(species.internodeLength.max).toBeCloseTo(0.014, 5);
+    expect(species.saplingStemNodes).toBe(14);
+
+    const tree = createSapling('juniper-procumbens', 42);
+    // Walk main stem (first-child chain)
+    let cursor: NodeId | null = tree.rootId;
+    let stemLen = 0;
+    let stemNodes = 0;
+    while (cursor) {
+      const node: Internode | undefined = tree.nodes[cursor];
+      if (!node) break;
+      stemLen += node.length;
+      stemNodes += 1;
+      cursor = node.children[0] ?? null;
+      if (stemNodes > 40) break;
+    }
+    // ~14 × ~1 cm mid-range ≈ 0.14 m; allow variance from RNG length jitter
+    expect(stemNodes).toBeGreaterThanOrEqual(14);
+    expect(stemLen).toBeGreaterThan(0.08);
+    expect(stemLen).toBeLessThan(0.28);
+
+    for (const n of Object.values(tree.nodes)) {
+      if (!n.living || n.parentId === null) continue;
+      // New wood should not be the old ~2.8 cm max
+      expect(n.length).toBeLessThanOrEqual(species.internodeLength.max * 1.3);
+    }
   });
 });
 
@@ -99,11 +132,14 @@ describe('growth', () => {
    * (foliageArea=0, reserves→0, vitality Low in flush season).
    */
   it('keeps living canopy through multi-year Years fast-forward (#63)', () => {
+    expect(MAX_TREE_NODES).toBeGreaterThanOrEqual(560);
     const tree = createSapling('juniper-procumbens', 42);
     // ~5 plant-years at Years pace (~5s wall clock)
     for (let i = 0; i < 1825; i++) tickDay(tree);
 
     expect(countLivingNodes(tree)).toBeGreaterThan(50);
+    // Must not stall forever at the hard graph cap under 2× resolution (#83)
+    expect(Object.keys(tree.nodes).length).toBeLessThanOrEqual(MAX_TREE_NODES);
     const foliage = totalFoliageArea(tree);
     expect(foliage).toBeGreaterThan(0.01);
 

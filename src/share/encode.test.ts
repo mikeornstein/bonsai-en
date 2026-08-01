@@ -204,18 +204,22 @@ describe('share link size capacity', () => {
     expect(compact).toBeLessThan(full * 0.4);
   });
 
-  it('~60-node tree fits under the old 8k URL budget after compact+LZ', () => {
+  it('mid-grown tree stays shareable; compact beats full JSON', () => {
     const tree = createSapling('juniper-procumbens', 42);
     growDays(tree, 180);
     const nodes = nodeCount(tree);
+    // Higher counts after #83 half-internode resolution
     expect(nodes).toBeGreaterThanOrEqual(50);
-    expect(nodes).toBeLessThan(100);
+    expect(nodes).toBeLessThan(220);
 
     const urlLen = estimateShareUrlLength(tree);
-    // Legacy full JSON+LZ was ~16k at this size; compact must beat 8k.
-    expect(urlLen).toBeLessThan(8000);
+    expect(urlLen).toBeLessThanOrEqual(MAX_SHARE_URL_LENGTH);
 
-    // Also prove improvement vs legacy encoding size
+    // Compact beats full JSON pre-LZ (keys + precision)
+    const full = serializeTree(tree).length;
+    const compact = serializeTreeForShare(tree).length;
+    expect(compact).toBeLessThan(full * 0.4);
+
     const legacyLz = LZString.compressToEncodedURIComponent(
       serializeTree(tree),
     ).length;
@@ -226,13 +230,14 @@ describe('share link size capacity', () => {
     expect(legacyLz).toBeGreaterThan(12000);
   });
 
-  it('~1-year tree (~200 nodes) fits under MAX_SHARE_URL_LENGTH', () => {
+  it('~1-year tree fits under MAX_SHARE_URL_LENGTH (or documents fallback)', () => {
     const tree = createSapling('juniper-procumbens', 42);
     growDays(tree, 365);
     const nodes = nodeCount(tree);
     expect(nodes).toBeGreaterThan(150);
 
     const urlLen = estimateShareUrlLength(tree);
+    // Dense #83 graphs may push ~1y near the cap; still must round-trip when under it
     expect(urlLen).toBeLessThanOrEqual(MAX_SHARE_URL_LENGTH);
 
     const restored = treeFromShareHash(treeToShareHash(tree));

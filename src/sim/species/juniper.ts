@@ -10,8 +10,8 @@ export const juniper: SpeciesDefinition = {
   scientificName: 'Juniperus procumbens',
   evergreen: true,
 
-  // Slightly larger units so a training sapling fills the pot visually
-  internodeLength: { min: 0.012, max: 0.028 },
+  // ~6–14 mm internodes (#83): finer prune/wire/curvature; pot scale via node count
+  internodeLength: { min: 0.006, max: 0.014 },
   saplingRadius: 0.007,
   /** ~0.45 mm tip floor — fine laterals without zero-radius wood (#58). */
   minRadius: 0.00045,
@@ -19,7 +19,8 @@ export const juniper: SpeciesDefinition = {
 
   // Acute branching typical of juniper pads
   branchAngle: { mean: 0.62, std: 0.16 },
-  lateralBudChance: 0.018,
+  // Halved with 2× axial nodes so laterals/m stay similar (#83)
+  lateralBudChance: 0.009,
   maxChildren: 3,
   // Sibling lateral separation — avoids parallel “railroad” forks (#39)
   /** ~35° minimum azimuth between laterals on the same node. */
@@ -50,11 +51,13 @@ export const juniper: SpeciesDefinition = {
   pipeCoefficient: 2200,
 
   apicalDominance: 0.78,
-  dominanceDecay: 0.55,
+  // √0.55 so per-meter apical suppression matches pre-#83 hop count
+  dominanceDecay: 0.742,
   pruneStimulus: 0.35,
   budBreakThreshold: 0.55,
 
-  foliageAreaPerInternode: 0.00055,
+  // ~half area/node so total foliage per meter of axis holds (#83)
+  foliageAreaPerInternode: 0.000275,
   foliageLifespanDays: 900,
   foliageSenescenceRate: 0.0012,
 
@@ -71,7 +74,8 @@ export const juniper: SpeciesDefinition = {
     rest: 0.2,
   },
 
-  saplingStemNodes: 7,
+  // Doubled with half internode length so stem height fills the pot (#83)
+  saplingStemNodes: 14,
   saplingLaterals: 4,
 
   physics: {

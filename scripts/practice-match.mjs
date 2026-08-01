@@ -193,7 +193,7 @@ await frontOrtho('03-front-wired.png');
 await page.evaluate(() => {
   const nodes = window.__bonsai.listNodes();
   const leaves = nodes
-    .filter((n) => n.living && n.isLeaf && n.parentId && n.length > 0.012)
+    .filter((n) => n.living && n.isLeaf && n.parentId && n.length > 0.006)
     .sort((a, b) => b.length - a.length)
     .slice(0, 6);
   for (const leaf of leaves) {

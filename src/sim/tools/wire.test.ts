@@ -116,7 +116,7 @@ describe('min bend radius / max joint angle', () => {
   });
 
   it('caps joint angle so thick lignified wood stays gentle (°/segment)', () => {
-    // ~2 cm internode, 2 cm radius trunk, highly lignified
+    // ~2 cm internode (longer than typical #83 ~1 cm), 2 cm radius trunk, lignified
     const max = maxJointAngleRad(0.02, 0.02, 0.9);
     // R_min large → max angle small (well under 15°)
     expect(max).toBeLessThan((15 * Math.PI) / 180);
