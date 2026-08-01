@@ -321,9 +321,13 @@ export class Game {
     if (on) {
       const s = this.getPracticeScore();
       this.scene.sumi.applyScoreFeedback(s);
+      this.updatePracticeMeta(s);
+      this.setPracticeMetaVisible(true);
+      // One-shot status on mode enter; ongoing grade lives in meta (#65)
       this.setStatus(s.label);
-      this.lastPracticeLabel = s.label;
+      this.lastPracticeLabel = this.formatPracticeMeta(s);
     } else {
+      this.setPracticeMetaVisible(false);
       this.setStatus('Free train');
       this.lastPracticeLabel = '';
     }
@@ -349,10 +353,12 @@ export class Game {
     const on = readPlayMode() === 'practice';
     this.scene.sumi.setEnabled(on);
     this.syncPracticeButton(on);
+    this.setPracticeMetaVisible(on);
     if (!on) return;
     const s = this.getPracticeScore();
     this.scene.sumi.applyScoreFeedback(s);
-    this.lastPracticeLabel = s.label;
+    this.updatePracticeMeta(s);
+    this.lastPracticeLabel = this.formatPracticeMeta(s);
     const status = this.statusEl.textContent?.trim() ?? '';
     if (!status) this.setStatus(s.label);
     // First-run / practice-default hint (shokunin-aligned)
@@ -887,6 +893,22 @@ export class Game {
     document.getElementById('hud')?.classList.remove('idle-fade');
   }
 
+  /** Sparse meta chip text: `forming · 0.68` (grade lives outside status). */
+  private formatPracticeMeta(s: PracticeScore): string {
+    return `${s.grade} · ${s.score.toFixed(2)}`;
+  }
+
+  private updatePracticeMeta(s: PracticeScore): void {
+    const el = document.getElementById('info-practice');
+    if (el) el.textContent = this.formatPracticeMeta(s);
+  }
+
+  private setPracticeMetaVisible(on: boolean): void {
+    document
+      .getElementById('info-practice-row')
+      ?.classList.toggle('hidden', !on);
+  }
+
   /** After ~30s idle, fade HUD; any input restores. */
   private bindIdleChrome(): void {
     const hud = document.getElementById('hud');
@@ -995,16 +1017,18 @@ export class Game {
       saveLocal(this.tree);
     }
 
-    // Practice mode: quiet score in status + ink feedback (throttled)
+    // Practice mode: quiet grade in meta + ink feedback (throttled ~1.2s).
+    // Status stays free for tool/event messages (#65).
     if (this.scene.sumi.isEnabled()) {
       this.practiceHudTimer += dt;
       if (this.practiceHudTimer > 1.2) {
         this.practiceHudTimer = 0;
         const s = this.getPracticeScore();
         this.scene.sumi.applyScoreFeedback(s);
-        if (s.label !== this.lastPracticeLabel) {
-          this.lastPracticeLabel = s.label;
-          this.setStatus(s.label);
+        const meta = this.formatPracticeMeta(s);
+        if (meta !== this.lastPracticeLabel) {
+          this.lastPracticeLabel = meta;
+          this.updatePracticeMeta(s);
         }
       }
     }

@@ -185,6 +185,20 @@ body.screenshot-hide-ui #hud {
   opacity: 0.9;
 }
 
+/* Quiet practice grade chip — survives tool status messages (#65) */
+.panel.meta .practice-row {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+}
+
+.panel.meta .practice-row #info-practice {
+  color: var(--text);
+  font-size: 0.72rem;
+  opacity: 0.92;
+  letter-spacing: 0.02em;
+}
+
 .hidden,
 .debug-only.hidden {
   display: none !important;
