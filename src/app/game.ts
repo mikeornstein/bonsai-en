@@ -36,7 +36,6 @@ import {
   pickShareData,
   portraitFilename,
   shareDraftText,
-  shareDraftWithUrl,
   systemShare,
   xIntentUrl,
 } from '../share/social';
@@ -1191,27 +1190,26 @@ export class Game {
     ) as HTMLButtonElement | null;
     const xBtn = document.getElementById('share-x') as HTMLButtonElement | null;
 
+    // Never show the giant #s= hash in the panel (#90) — social is image-first.
+    if (urlEl) {
+      urlEl.hidden = true;
+      urlEl.textContent = '';
+    }
+
     if (built.ok) {
       if (hint) {
         hint.textContent =
-          'Copy a clean link for Messages, open the system share sheet, or draft a post to X with a tree portrait.';
-      }
-      if (urlEl) {
-        urlEl.hidden = false;
-        urlEl.textContent = built.url;
+          'Share a portrait (Messages / X). Copy link only if you need a full restore URL — it is long by design.';
       }
       if (copyBtn) {
         copyBtn.disabled = false;
-        copyBtn.classList.add('primary');
+        // Image-first: system/X are primary social; copy is secondary power path
+        copyBtn.classList.remove('primary');
       }
     } else {
       if (hint) {
         hint.textContent =
-          'This tree is too large for a share link. Save a portrait image, export the JSON file, or post to X with the image only.';
-      }
-      if (urlEl) {
-        urlEl.hidden = true;
-        urlEl.textContent = '';
+          'Share a portrait image via Messages or X. This tree is too large for a restore link.';
       }
       if (copyBtn) {
         copyBtn.disabled = true;
@@ -1221,17 +1219,23 @@ export class Game {
 
     if (systemBtn) {
       systemBtn.disabled = typeof navigator.share !== 'function';
-      systemBtn.title = built.ok
-        ? 'Open the device share sheet (Messages on iPhone)'
-        : 'Share a portrait image (link unavailable — tree too large for a URL)';
+      systemBtn.title =
+        'Share the portrait image (and a short caption) — no long link';
+      if (!systemBtn.disabled) systemBtn.classList.add('primary');
+      else systemBtn.classList.remove('primary');
     }
-    if (xBtn) xBtn.disabled = false;
+    if (xBtn) {
+      xBtn.disabled = false;
+      // When Web Share is missing, highlight Post to X as the social path
+      if (systemBtn?.disabled) xBtn.classList.add('primary');
+      else xBtn.classList.remove('primary');
+    }
   }
 
   private async shareCopyLink(): Promise<void> {
     const result = await copyShareLink(this.tree);
     if (result.status === 'copied') {
-      this.setStatus('Link copied — paste into Messages');
+      this.setStatus('Restore link copied (long) — paste where needed');
       this.refreshSharePanel();
       return;
     }
@@ -1242,22 +1246,22 @@ export class Game {
       this.refreshSharePanel();
       return;
     }
+    // Clipboard denied: last resort show the URL so the user can select it.
+    // Prefer not to, but there is no other recovery path.
     this.refreshSharePanel();
     const urlEl = document.getElementById('share-url');
     if (urlEl && result.url) {
       urlEl.hidden = false;
       urlEl.textContent = result.url;
     }
-    this.setStatus('Clipboard blocked — select the link below and copy');
+    this.setStatus('Clipboard blocked — long link shown below to copy manually');
   }
 
   private async shareSystem(): Promise<void> {
     if (typeof navigator.share !== 'function') {
-      this.setStatus('System share unavailable — use Copy link');
+      this.setStatus('System share unavailable — try Post to X or Save image');
       return;
     }
-    const built = buildShareUrl(this.tree);
-    const url = built.ok ? built.url : null;
     let file: File | null = null;
     try {
       const blob = await this.captureSharePortrait();
@@ -1268,26 +1272,23 @@ export class Game {
       // image optional
     }
 
+    // Image-first: short caption only — never the tree deep-link (#90).
     const data = pickShareData({
       title: 'Bonsai-en',
-      text: url ? shareDraftText() : shareDraftWithUrl(null),
-      url,
+      text: shareDraftText(),
       file,
     });
     const payload =
       data ??
-      (file
-        ? pickShareData({
-            title: 'Bonsai-en',
-            text: shareDraftText(),
-            file,
-          })
-        : null);
+      pickShareData({
+        title: 'Bonsai-en',
+        text: shareDraftText(),
+      });
 
     if (!payload) {
-      if (built.ok) {
-        await this.shareCopyLink();
-        this.setStatus('Share sheet unavailable — link copied instead');
+      if (file) {
+        downloadBlob(file, portraitFilename(this.tree.speciesId));
+        this.setStatus('Share sheet unavailable — portrait saved instead');
         return;
       }
       this.setStatus('Nothing to share — try Save image');
@@ -1296,20 +1297,18 @@ export class Game {
 
     const result = await systemShare(payload);
     if (result === 'shared') {
-      this.setStatus('Shared');
+      this.setStatus(file ? 'Shared portrait' : 'Shared');
       this.closeSharePanel();
     } else if (result === 'cancelled') {
       this.setStatus('Share cancelled');
     } else if (result === 'unavailable') {
-      this.setStatus('System share unavailable — use Copy link');
+      this.setStatus('System share unavailable — try Post to X or Save image');
     } else {
-      this.setStatus('Share failed — try Copy link or Save image');
+      this.setStatus('Share failed — try Save image or Post to X');
     }
   }
 
   private async shareToX(): Promise<void> {
-    const built = buildShareUrl(this.tree);
-    const url = built.ok ? built.url : null;
     let imageSaved = false;
     try {
       const blob = await this.captureSharePortrait();
@@ -1321,22 +1320,14 @@ export class Game {
       // continue without image
     }
 
-    const intent = xIntentUrl({
-      text: shareDraftText(),
-      url,
-    });
+    // Caption only — never pass the #s= deep-link into X compose (#90).
+    const intent = xIntentUrl({ text: shareDraftText() });
     window.open(intent, '_blank', 'noopener,noreferrer');
 
-    if (imageSaved && url) {
+    if (imageSaved) {
       this.setStatus('Image saved — attach it in the X window');
-    } else if (imageSaved) {
-      this.setStatus(
-        'Image saved — attach in X (tree too large for a share link)',
-      );
-    } else if (url) {
-      this.setStatus('Opened X draft with your link');
     } else {
-      this.setStatus('Opened X draft — tree too large for a link');
+      this.setStatus('Opened X draft — Save image to attach a portrait');
     }
   }
 
