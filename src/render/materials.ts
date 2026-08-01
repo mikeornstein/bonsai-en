@@ -221,6 +221,33 @@ export function createHighlightRimMaterial(): THREE.MeshBasicMaterial {
 }
 
 /**
+ * Prune-intent hover — warm ink wash, slightly cooler/softer than locked
+ * selection moss so “about to cut” reads as intent, not commit (#81).
+ * Opacity must stay readable on bark under soft-GL and product GPU.
+ */
+export function createHoverHighlightMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#9a8860'),
+    transparent: true,
+    opacity: 0.38,
+    depthTest: true,
+    depthWrite: false,
+  });
+}
+
+/** Hover rim companion — quiet ink edge for soft-GL contrast. */
+export function createHoverHighlightRimMaterial(): THREE.MeshBasicMaterial {
+  return new THREE.MeshBasicMaterial({
+    color: new THREE.Color('#4a4338'),
+    transparent: true,
+    opacity: 0.28,
+    depthTest: true,
+    depthWrite: false,
+    side: THREE.BackSide,
+  });
+}
+
+/**
  * Practice coach overflow tips — warm sepia ink, distinct from selection moss.
  * Readable on green pads and bark under product GPU and soft-GL (no neon).
  */

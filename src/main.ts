@@ -89,6 +89,8 @@ export interface BonsaiHarness {
   listNodes(): NodeSummary[];
   setTool(tool: ToolMode): void;
   setSpeed(speed: SpeedMode): void;
+  /** Prune-intent hover highlight (pointer preview / screenshot harness) (#81). */
+  setPruneHover(nodeId: string | null): void;
   act(
     tool: ToolMode,
     nodeId: string,
@@ -197,6 +199,9 @@ try {
     },
     setSpeed(speed: SpeedMode) {
       game.setSpeed(speed);
+    },
+    setPruneHover(nodeId: string | null) {
+      game.setPruneHover(nodeId);
     },
     act(tool: ToolMode, nodeId: string) {
       return game.actOnNode(tool, nodeId);

@@ -203,6 +203,8 @@ export class Game {
   private checklistCollapsedForProgress = false;
   /** Last continuous wire status key (`nodeId:pct`) so % updates without re-tap (#68). */
   private lastWireHudKey = '';
+  /** Prune-tool hover preview target (#81). */
+  private hoverId: NodeId | null = null;
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -768,6 +770,7 @@ export class Game {
         this.hasPrunedSession = true;
         this.selected = null;
         this.scene.setSelected(null);
+        this.clearPruneHover();
         this.markPhysicsDirty(true);
         this.scene.markDirty();
         this.scene.treeRenderer.pulseToolFeedback('prune');
@@ -854,6 +857,7 @@ export class Game {
       snap.selected && this.tree.nodes[snap.selected] ? snap.selected : null;
     this.selected = sel;
     this.scene.setSelected(sel);
+    this.clearPruneHover();
     this.markPhysicsDirty(true);
     this.syncPhysics();
     this.scene.markDirty();
@@ -887,6 +891,7 @@ export class Game {
     clearLocal();
     history.replaceState(null, '', window.location.pathname + window.location.search);
     this.scene.setSelected(null);
+    this.clearPruneHover();
     this.markPhysicsDirty(true);
     this.syncPhysics();
     this.scene.markDirty();
@@ -1028,6 +1033,7 @@ export class Game {
         this.selected = null;
         this.structuralHistory.clear();
         this.scene.setSelected(null);
+        this.clearPruneHover();
         this.markPhysicsDirty(true);
         this.syncPhysics();
         this.scene.markDirty();
@@ -1125,6 +1131,9 @@ export class Game {
      * - Tap on unwired wood → install wire; tap on wired → select + set %
      * - Unwire tool remains for removal
      *
+     * Prune hover (#81): while prune tool is active and not dragging, raycast
+     * on pointermove and soft-highlight the segment that would be cut.
+     *
      * Touch: 8px drag threshold so taps don't start bends; multi-touch orbit/zoom
      * via OrbitControls still works on empty canvas. Known limit: one-finger
      * bend on wood; use second finger / empty space to reframe.
@@ -1142,6 +1151,8 @@ export class Game {
         this.downY = e.clientY;
         this.lastBendX = e.clientX;
         this.lastBendY = e.clientY;
+        // Orbit / press-and-hold: hide prune intent preview
+        this.clearPruneHover();
 
         if (this.tool === 'wire') {
           const id = this.scene.pickNode(e.clientX, e.clientY);
@@ -1156,7 +1167,11 @@ export class Game {
     );
 
     canvas.addEventListener('pointermove', (e) => {
-      if (!this.pointerDown) return;
+      // Hover preview only while not pressing (orbit/tap gestures own the pointer)
+      if (!this.pointerDown) {
+        this.updatePruneHover(e.clientX, e.clientY);
+        return;
+      }
       const dxFromDown = e.clientX - this.downX;
       const dyFromDown = e.clientY - this.downY;
       if (Math.hypot(dxFromDown, dyFromDown) > this.dragThresholdPx) {
@@ -1244,6 +1259,51 @@ export class Game {
 
     canvas.addEventListener('pointerup', end);
     canvas.addEventListener('pointercancel', end);
+    canvas.addEventListener('pointerleave', () => {
+      this.clearPruneHover();
+    });
+  }
+
+  /** Soft-highlight the segment prune would cut under the cursor (#81). */
+  private updatePruneHover(clientX: number, clientY: number): void {
+    if (this.tool !== 'prune') {
+      this.clearPruneHover();
+      return;
+    }
+    const id = this.scene.pickNode(clientX, clientY);
+    let next: NodeId | null = null;
+    if (id && id !== this.tree.rootId) {
+      const node = this.tree.nodes[id];
+      if (node?.living) next = id;
+    }
+    this.setPruneHover(next);
+  }
+
+  /**
+   * Preview prune cut target (pointer hover or harness screenshots).
+   * Ignores root / dead / missing nodes.
+   */
+  setPruneHover(nodeId: NodeId | null): void {
+    let next: NodeId | null = null;
+    if (nodeId && nodeId !== this.tree.rootId) {
+      const node = this.tree.nodes[nodeId];
+      if (node?.living) next = nodeId;
+    }
+    if (next === this.hoverId) return;
+    this.hoverId = next;
+    this.scene.setHover(
+      next,
+      this.tree,
+      computeLiveWorldFrames(this.tree, this.physics),
+    );
+  }
+
+  private clearPruneHover(): void {
+    if (this.hoverId === null && this.scene.treeRenderer.getHover() === null) {
+      return;
+    }
+    this.hoverId = null;
+    this.scene.setHover(null);
   }
 
   private onTap(x: number, y: number): void {
@@ -1304,6 +1364,10 @@ export class Game {
     document.querySelectorAll<HTMLButtonElement>('[data-tool]').forEach((btn) => {
       btn.classList.toggle('active', btn.dataset.tool === tool);
     });
+    // Hover preview is prune-only
+    if (tool !== 'prune') {
+      this.clearPruneHover();
+    }
     // Prune from Inspect: preselect top overflow tip if nothing selected
     if (
       tool === 'prune' &&
@@ -1328,7 +1392,7 @@ export class Game {
       inspect: practiceInspect
         ? 'Warm tips sit outside the pad · tap for why'
         : 'Tap a branch · Drag to orbit',
-      prune: 'Tap a branch to cut clean',
+      prune: 'Hover a branch · tap to cut clean',
       pinch: 'Tap a tip to pinch · laterals wake',
       wire: wireHint,
       unwire: 'Tap wired wood to remove wire',
