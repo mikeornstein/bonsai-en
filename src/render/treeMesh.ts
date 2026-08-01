@@ -83,6 +83,8 @@ interface FlareLobeSpec {
 interface WirePoseHandle {
   mesh: THREE.Mesh;
   nodeId: NodeId;
+  /** Last applied setAmount so applyPose can refresh sheen without rebuild (#68). */
+  setAmount: number;
 }
 
 /** Cut scar disc at live tip. */
@@ -450,6 +452,14 @@ export class TreeRenderer {
     for (const h of this.wirePoseHandles) {
       const frame = frames.get(h.nodeId);
       if (frame) this.placeWireAlongFrame(h.mesh, frame);
+      // Live set sheen — glanceable without waiting for structural rebuild (#68)
+      const node = tree.nodes[h.nodeId];
+      const set = node?.wire?.setAmount ?? h.setAmount;
+      if (Math.abs(set - h.setAmount) > 0.01) {
+        h.setAmount = set;
+        const mat = h.mesh.material as THREE.MeshPhysicalMaterial;
+        this.applyWireSetLook(mat, set, node?.lignification ?? 0);
+      }
     }
     for (const h of this.scarPoseHandles) {
       const frame = frames.get(h.nodeId);
@@ -1036,6 +1046,42 @@ export class TreeRenderer {
   }
 
   /**
+   * Map wire setAmount → coil color/sheen (#68).
+   * setAmount is the primary driver (not wood lignification) so fresh wire on
+   * old wood still reads bright copper, and set wire dulls to pewter-bronze.
+   * Soft-GL and product GPU both read the value shift without relying on DOF.
+   */
+  private applyWireSetLook(
+    mat: THREE.MeshPhysicalMaterial,
+    setAmount: number,
+    lignification = 0,
+  ): void {
+    const t = Math.max(0, Math.min(1, setAmount));
+    // Ease mid-band so ~15–40% set is already a clear step from fresh
+    const dull = t * t * (3 - 2 * t); // smoothstep
+    // Tiny cool shift from wood age only — never dominates fresh coils
+    const cool = lignification * 0.06 * (0.35 + 0.65 * t);
+
+    // Fresh: bright warm copper-aluminum; set: cool dull pewter-bronze
+    mat.color.setRGB(
+      0.92 - dull * 0.52 - cool * 0.08,
+      0.72 - dull * 0.28 - cool * 0.04,
+      0.38 - dull * 0.02 + cool * 0.12,
+    );
+    mat.metalness = 0.95 - dull * 0.62;
+    mat.roughness = 0.22 + dull * 0.58;
+    mat.envMapIntensity = 1.2 - dull * 0.85;
+    mat.clearcoat = 0.18 * (1 - dull);
+    mat.clearcoatRoughness = 0.35 + dull * 0.4;
+    // Soft copper glow when freshly wired — fades as wood holds the bend
+    mat.emissive = new THREE.Color().setRGB(
+      0.18 * (1 - dull),
+      0.07 * (1 - dull),
+      0.02 * (1 - dull),
+    );
+  }
+
+  /**
    * Training wire — readable without debug; dulls as setAmount rises.
    * Helix is baked in local +Y (length fixed at rebuild); applyPose re-orients
    * the mesh from live frames without reallocating TubeGeometry.
@@ -1071,31 +1117,16 @@ export class TreeRenderer {
     // Thicker when fresh; thinner as wood holds the bend — also scale down
     // on hairline shoots so wire doesn't read thicker than the wood
     const tubeBase = Math.min(0.00072, Math.max(0.00028, radius * 0.55));
-    const tubeR = tubeBase * (1 - setAmount * 0.35);
+    const tubeR = tubeBase * (1 - setAmount * 0.4);
     const geo = new THREE.TubeGeometry(curve, segs, tubeR, 6, false);
     const mat = this.wireMat!.clone();
-    // Fresh: bright warm copper-aluminum; set: cool dull bronze
-    const dull = Math.max(setAmount, lignification * 0.35);
-    mat.color.setRGB(
-      0.82 - dull * 0.42, // warm → muted
-      0.68 - dull * 0.28,
-      0.42 - dull * 0.08,
-    );
-    mat.metalness = 0.92 - dull * 0.55;
-    mat.roughness = 0.28 + dull * 0.52;
-    mat.envMapIntensity = 1.05 - dull * 0.65;
-    // Soft copper glow when freshly wired (set progress cue)
-    mat.emissive = new THREE.Color().setRGB(
-      0.12 * (1 - dull),
-      0.05 * (1 - dull),
-      0.02 * (1 - dull),
-    );
+    this.applyWireSetLook(mat, setAmount, lignification);
     const mesh = new THREE.Mesh(geo, mat);
     mesh.castShadow = true;
     mesh.userData.disposeMat = true;
     this.placeWireAlongFrame(mesh, frame);
     this.wireGroup.add(mesh);
-    this.wirePoseHandles.push({ mesh, nodeId });
+    this.wirePoseHandles.push({ mesh, nodeId, setAmount });
   }
 
   /** Place local-+Y wire coil so base→tip matches live frame (rigid, no re-tube). */

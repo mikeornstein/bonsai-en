@@ -193,6 +193,8 @@ export class Game {
   private checklistCountEl: HTMLElement | null = null;
   private lastChecklistDone: ChecklistDone | null = null;
   private checklistCollapsedForProgress = false;
+  /** Last continuous wire status key (`nodeId:pct`) so % updates without re-tap (#68). */
+  private lastWireHudKey = '';
 
   constructor(canvas: HTMLCanvasElement) {
     this.statusEl = document.getElementById('status')!;
@@ -687,7 +689,12 @@ export class Game {
 
     if (tool === 'inspect') {
       const coach = this.coachRanked.find((r) => r.id === nodeId);
-      const msg = coach ? coach.reason : 'This branch';
+      // Wired wood: surface set progress immediately (no re-tap needed) (#68)
+      const msg = coach
+        ? coach.reason
+        : node.wire
+          ? wireSetLabel(node.wire.setAmount)
+          : 'This branch';
       this.setStatus(msg);
       this.refreshHud();
       return { ok: true, message: msg };
@@ -1183,7 +1190,7 @@ export class Game {
       return;
     }
 
-    // Wire tool: tap installs on unwired wood; re-tap wired shows set progress
+    // Wire tool: tap installs on unwired wood; wired selection keeps set % live via refreshHud
     if (this.tool === 'wire') {
       this.selected = id;
       this.scene.setSelected(id);
@@ -1192,6 +1199,7 @@ export class Game {
         this.setStatus(
           `${wireSetLabel(node.wire.setAmount)} · drag wood to shape · empty drag orbits`,
         );
+        this.lastWireHudKey = ''; // force continuous status resync
         this.refreshHud();
         return;
       }
@@ -1422,6 +1430,72 @@ export class Game {
     this.scene.applySeasonLook(env.season);
   }
 
+  /**
+   * Month/Year wall-clock boost for wire set only (#68).
+   * Live/Day stay botanical (mult = 1); Mo/Years make short waits readable
+   * even when plant-day substeps lag under heavy trees.
+   */
+  private wireSetMultForSpeed(): number {
+    if (this.speed === 'year') return 2;
+    if (this.speed === 'month') return 1.6;
+    return 1;
+  }
+
+  /**
+   * Keep status + selection set % in sync while a wired node stays selected.
+   * Does not require re-tap; quiet coach when set is still low (#68).
+   */
+  private syncWiredSelectionHud(): void {
+    const selId = this.selected;
+    if (!selId) {
+      this.lastWireHudKey = '';
+      return;
+    }
+    const node = this.tree.nodes[selId];
+    if (!node?.wire) {
+      this.lastWireHudKey = '';
+      return;
+    }
+
+    const set = node.wire.setAmount;
+    const pct = Math.round(Math.max(0, Math.min(1, set)) * 100);
+    const key = `${selId}:${pct}`;
+    if (key === this.lastWireHudKey) return;
+    this.lastWireHudKey = key;
+
+    // Selection panel always carries set progress via describeNode.
+    // Also refresh status so players watching the header see % climb.
+    if (this.wiring) return;
+
+    const label = wireSetLabel(set);
+    const status = this.statusEl.textContent ?? '';
+    const wireish =
+      this.tool === 'wire' ||
+      this.tool === 'unwire' ||
+      this.tool === 'inspect' ||
+      /wire|wiring|set/i.test(status);
+
+    if (!wireish) return;
+
+    // Sparse present-tense copy; coach only while set is low and clock is slow
+    const slowClock =
+      this.speed === 'pause' ||
+      this.speed === 'live' ||
+      this.speed === 'day';
+    let msg: string;
+    if (set < 0.3 && slowClock) {
+      // Quiet coach while set is low; % key already throttles spam
+      msg = `${label} · leave wire · advance to Mo`;
+    } else if (this.tool === 'wire') {
+      msg = `${label} · drag wood to shape`;
+    } else {
+      msg = label;
+    }
+
+    // Soft write — avoid unfading HUD on every plant-day under acceleration
+    this.statusEl.textContent = msg;
+  }
+
   refreshHud(): void {
     const env = environmentAt(this.tree.agePlantDays);
     const species = getSpecies(this.tree.speciesId);
@@ -1447,9 +1521,11 @@ export class Game {
 
     const sel = document.getElementById('info-selection')!;
     if (this.selected && this.tree.nodes[this.selected]) {
+      // Always includes live wire set % while wired (#68) via describeNode
       const base = describeNode(this.tree, this.selected);
       const coach = this.coachRanked.find((r) => r.id === this.selected);
       sel.textContent = coach ? `${coach.reason} · ${base}` : base;
+      this.syncWiredSelectionHud();
     } else if (
       this.tool === 'inspect' &&
       this.scene.sumi.isEnabled() &&
@@ -1459,6 +1535,7 @@ export class Game {
       sel.textContent = `${top.reason} · coach tip`;
     } else {
       sel.textContent = `${species.commonName}`;
+      this.lastWireHudKey = '';
     }
   }
 
@@ -1471,7 +1548,9 @@ export class Game {
       // Adaptive substep cap — see growthMaxSteps (#34)
       const maxSteps = this.growthMaxSteps(nodeCount);
       if (this.accum >= 1) {
-        const steps = tickDays(this.tree, this.accum, maxSteps);
+        const steps = tickDays(this.tree, this.accum, maxSteps, {
+          wireSetMult: this.wireSetMultForSpeed(),
+        });
         this.accum -= steps;
         if (this.accum < 0) this.accum = 0;
         if (this.accum > maxSteps) this.accum = this.accum % 1;
