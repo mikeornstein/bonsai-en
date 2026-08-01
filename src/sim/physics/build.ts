@@ -36,7 +36,7 @@ function makeJoint(
   const dMass = distal.get(id) ?? mass;
   const k = bendStiffness(node, cfg);
   const J = rotationalInertia(dMass, node.length, mass, k, cfg.fixedDt);
-  const c = bendDamping(k, J, cfg);
+  const c = bendDamping(k, J, node, cfg);
   return {
     nodeId: id,
     parentId: node.parentId,
@@ -63,6 +63,16 @@ export function createPhysicsWorld(
   partial?: Partial<PhysicsConfig>,
 ): PhysicsWorld {
   const config: PhysicsConfig = { ...DEFAULT_PHYSICS_CONFIG, ...partial };
+  // Legacy: `dampingRatio` alone used to set uniform ζ — keep that working.
+  if (
+    partial &&
+    partial.dampingRatio != null &&
+    partial.dampingRatioGreen == null &&
+    partial.dampingRatioLignified == null
+  ) {
+    config.dampingRatioGreen = partial.dampingRatio;
+    config.dampingRatioLignified = partial.dampingRatio;
+  }
   const world: PhysicsWorld = {
     joints: new Map(),
     rootId: tree.rootId,

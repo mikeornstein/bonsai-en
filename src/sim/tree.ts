@@ -522,6 +522,11 @@ export interface NodeWorld {
   tip: Vec3;
   dir: Vec3;
   worldOrientation: Quat;
+  /**
+   * Optional smooth path samples base→tip (inclusive) for render curvature (#94).
+   * When absent, consumers treat the segment as a straight chord.
+   */
+  path?: Vec3[];
 }
 
 export function computeWorldFrames(tree: TreeState): Map<NodeId, NodeWorld> {
@@ -545,7 +550,94 @@ export function computeWorldFrames(tree: TreeState): Map<NodeId, NodeWorld> {
   };
 
   visit(root.id, vec3(0, 0, 0), quatIdentity());
+  attachRestHermitePaths(tree, out);
   return out;
+}
+
+/** Hermite paths for rest-pose frames (mirrors physics attachHermitePaths). */
+function attachRestHermitePaths(
+  tree: TreeState,
+  frames: Map<NodeId, NodeWorld>,
+): void {
+  const samples = 5;
+  const tension = 0.55;
+  for (const [id, frame] of frames) {
+    const node = tree.nodes[id];
+    if (!node) continue;
+    const dx = frame.tip[0] - frame.base[0];
+    const dy = frame.tip[1] - frame.base[1];
+    const dz = frame.tip[2] - frame.base[2];
+    const L = Math.hypot(dx, dy, dz) || 1e-6;
+
+    let dix = frame.dir[0];
+    let diy = frame.dir[1];
+    let diz = frame.dir[2];
+    if (node.parentId) {
+      const pf = frames.get(node.parentId);
+      if (pf) {
+        dix = pf.dir[0];
+        diy = pf.dir[1];
+        diz = pf.dir[2];
+      }
+    }
+    let inLen = Math.hypot(dix, diy, diz) || 1;
+    dix /= inLen;
+    diy /= inLen;
+    diz /= inLen;
+
+    let dox = frame.dir[0];
+    let doy = frame.dir[1];
+    let doz = frame.dir[2];
+    if (node.children.length > 0) {
+      let ax = 0;
+      let ay = 0;
+      let az = 0;
+      let n = 0;
+      for (const c of node.children) {
+        const cf = frames.get(c);
+        if (!cf) continue;
+        ax += cf.dir[0];
+        ay += cf.dir[1];
+        az += cf.dir[2];
+        n += 1;
+      }
+      if (n > 0) {
+        dox = ax / n;
+        doy = ay / n;
+        doz = az / n;
+      }
+    }
+    let outLen = Math.hypot(dox, doy, doz) || 1;
+    dox /= outLen;
+    doy /= outLen;
+    doz /= outLen;
+
+    const t0x = dix * L * tension;
+    const t0y = diy * L * tension;
+    const t0z = diz * L * tension;
+    const t1x = dox * L * tension;
+    const t1y = doy * L * tension;
+    const t1z = doz * L * tension;
+
+    const path: Vec3[] = [];
+    for (let i = 0; i < samples; i++) {
+      const t = i / (samples - 1);
+      const t2 = t * t;
+      const t3 = t2 * t;
+      const h00 = 2 * t3 - 3 * t2 + 1;
+      const h10 = t3 - 2 * t2 + t;
+      const h01 = -2 * t3 + 3 * t2;
+      const h11 = t3 - t2;
+      path.push([
+        h00 * frame.base[0] + h10 * t0x + h01 * frame.tip[0] + h11 * t1x,
+        h00 * frame.base[1] + h10 * t0y + h01 * frame.tip[1] + h11 * t1y,
+        h00 * frame.base[2] + h10 * t0z + h01 * frame.tip[2] + h11 * t1z,
+      ]);
+    }
+    path[0] = [frame.base[0], frame.base[1], frame.base[2]];
+    path[samples - 1] = [frame.tip[0], frame.tip[1], frame.tip[2]];
+    frame.path = path;
+  }
 }
 
 export function getSubtreeIds(tree: TreeState, rootId: NodeId): Set<NodeId> {

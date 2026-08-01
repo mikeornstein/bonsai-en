@@ -59,7 +59,13 @@ function createScaleGeometry(): THREE.BufferGeometry {
 }
 
 interface SegmentPoseHandles {
+  /** Primary capsule (also first curve piece when path has multiple samples). */
   segment: THREE.Mesh;
+  /**
+   * Extra capsules along Hermite path for in-segment curvature (#94).
+   * Empty when the segment is drawn as a single straight chord.
+   */
+  curvePieces: THREE.Mesh[];
   jointBase: THREE.Mesh;
   jointTip: THREE.Mesh | null;
   /** Invisible fat collider for thin wood — not drawn (#58). */
@@ -522,8 +528,11 @@ export class TreeRenderer {
     for (const [id, handles] of this.poseHandles) {
       const frame = frames.get(id);
       if (!frame) continue;
-      this.placeSegment(handles.segment, frame);
-      if (handles.pickProxy) this.placeSegment(handles.pickProxy, frame);
+      this.placeSegmentChain(handles, frame);
+      if (handles.pickProxy) {
+        // Pick proxy stays a single chord capsule (cheap hit target)
+        this.placeSegment(handles.pickProxy, frame);
+      }
       this.placeJoint(handles.jointBase, frame.base, frame.dir);
       if (handles.jointTip) {
         this.placeJoint(handles.jointTip, frame.tip, frame.dir);
@@ -700,12 +709,25 @@ export class TreeRenderer {
       }
     }
 
-    const mesh = this.makeTaperedSegment(r0, r1, frame, mat);
-    mesh.userData.nodeId = id;
-    mesh.userData.disposeMat = true;
-    mesh.castShadow = true;
-    mesh.receiveShadow = true;
-    this.branchGroup.add(mesh);
+    // Multi-capsule chain along Hermite path for continuous curvature (#94)
+    const { primary, pieces } = this.makeCurvedSegmentChain(
+      r0,
+      r1,
+      frame,
+      mat,
+    );
+    primary.userData.nodeId = id;
+    primary.userData.disposeMat = true;
+    primary.castShadow = true;
+    primary.receiveShadow = true;
+    this.branchGroup.add(primary);
+    for (const p of pieces) {
+      p.userData.nodeId = id;
+      p.castShadow = true;
+      p.receiveShadow = true;
+      this.branchGroup.add(p);
+    }
+    const mesh = primary;
 
     // Pick: fatten hit target without fattening the drawn mesh (#58)
     let pickProxy: THREE.Mesh | null = null;
@@ -784,6 +806,7 @@ export class TreeRenderer {
 
     this.poseHandles.set(id, {
       segment: mesh,
+      curvePieces: pieces,
       jointBase: joint,
       jointTip: tipJoint,
       pickProxy,
@@ -880,9 +903,89 @@ export class TreeRenderer {
     return mesh;
   }
 
-  private placeSegment(mesh: THREE.Mesh, frame: NodeWorld): void {
-    const base = new THREE.Vector3(...frame.base);
-    const tip = new THREE.Vector3(...frame.tip);
+  /**
+   * Build a chain of unit cylinders that follow the frame Hermite path.
+   * Primary mesh is pieces[0]; remaining pieces are siblings for pose updates.
+   */
+  private makeCurvedSegmentChain(
+    r0: number,
+    r1: number,
+    frame: NodeWorld,
+    mat: THREE.Material,
+  ): { primary: THREE.Mesh; pieces: THREE.Mesh[] } {
+    const path = frame.path;
+    const nSeg =
+      path && path.length >= 3 ? path.length - 1 : 1;
+    const pieces: THREE.Mesh[] = [];
+    for (let i = 0; i < nSeg; i++) {
+      const t0 = i / nSeg;
+      const t1 = (i + 1) / nSeg;
+      const ra = Math.max(
+        MIN_VISUAL_RADIUS,
+        r0 + (r1 - r0) * t0,
+      );
+      const rb = Math.max(
+        MIN_VISUAL_RADIUS,
+        r0 + (r1 - r0) * t1,
+      );
+      const geo = new THREE.CylinderGeometry(
+        rb,
+        ra,
+        1,
+        this.radialSegments,
+        1,
+        false,
+      );
+      const mesh = new THREE.Mesh(geo, mat);
+      pieces.push(mesh);
+    }
+    const primary = pieces[0];
+    const extras = pieces.slice(1);
+    this.placeSegmentChain(
+      { segment: primary, curvePieces: extras, r0, r1 } as SegmentPoseHandles,
+      frame,
+    );
+    return { primary, pieces: extras };
+  }
+
+  /** Place primary + curvePieces along frame.path (or straight chord). */
+  private placeSegmentChain(
+    handles: Pick<
+      SegmentPoseHandles,
+      'segment' | 'curvePieces' | 'r0' | 'r1'
+    >,
+    frame: NodeWorld,
+  ): void {
+    const path =
+      frame.path && frame.path.length >= 2
+        ? frame.path
+        : [frame.base, frame.tip];
+    const nSeg = Math.max(1, path.length - 1);
+    const meshes = [handles.segment, ...handles.curvePieces];
+    // If piece count mismatches path (rebuild lag), fall back to single chord
+    if (meshes.length !== nSeg) {
+      this.placeCapsule(
+        handles.segment,
+        frame.base,
+        frame.tip,
+      );
+      for (const m of handles.curvePieces) m.visible = false;
+      return;
+    }
+    for (let i = 0; i < nSeg; i++) {
+      const m = meshes[i];
+      m.visible = true;
+      this.placeCapsule(m, path[i], path[i + 1]);
+    }
+  }
+
+  private placeCapsule(
+    mesh: THREE.Mesh,
+    a: readonly [number, number, number],
+    b: readonly [number, number, number],
+  ): void {
+    const base = new THREE.Vector3(a[0], a[1], a[2]);
+    const tip = new THREE.Vector3(b[0], b[1], b[2]);
     const mid = base.clone().add(tip).multiplyScalar(0.5);
     const dir = tip.clone().sub(base);
     const len = dir.length() || 1e-6;
@@ -890,6 +993,10 @@ export class TreeRenderer {
     mesh.position.copy(mid);
     mesh.scale.set(1, len, 1);
     mesh.quaternion.setFromUnitVectors(UP, dir);
+  }
+
+  private placeSegment(mesh: THREE.Mesh, frame: NodeWorld): void {
+    this.placeCapsule(mesh, frame.base, frame.tip);
   }
 
   /**
